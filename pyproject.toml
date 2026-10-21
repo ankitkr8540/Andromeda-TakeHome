@@ -1,0 +1,31 @@
+[project]
+name = "andromeda-takehome"
+version = "0.1.0"
+description = "Reproducible machine learning experiments for black-box function approximation"
+readme = "README.md"
+authors = [
+    { name = "Ankit Kumar", email = "ankitkr8540@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "mlflow>=3.17.1",
+    "numpy>=2.4.6",
+    "pandas>=3.0.6",
+    "pyyaml>=6.0.3",
+    "torch>=2.14.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.4,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "function_approximation"
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]

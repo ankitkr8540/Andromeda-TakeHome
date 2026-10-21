@@ -1,0 +1,12 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.DS_Store
+
+mlruns/
+mlartifacts/
+mlflow.db
+artifacts/
+dist/
