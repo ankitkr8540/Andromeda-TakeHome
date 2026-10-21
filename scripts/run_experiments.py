@@ -1,0 +1,369 @@
+
+"""Run a reproducible function-approximation experiment from YAML."""
+
+import argparse
+import json
+import random
+from datetime import UTC, datetime
+from pathlib import Path
+
+import joblib
+import matplotlib.pyplot as plt
+import mlflow
+import numpy as np
+import torch
+import yaml
+
+from function_approximation.data.dataset import create_dataloaders
+from function_approximation.data.generation import DataGenerator
+from function_approximation.data.preprocessing import DataPreprocessor
+from function_approximation.evaluation.metrics import compute_metrics
+from function_approximation.evaluation.visualization import (
+    plot_checkpoint_comparison,
+    plot_learning_curves,
+    plot_predictions,
+    plot_residuals,
+    predict_values,
+)
+from function_approximation.models.mlp import MLPRegressor
+from function_approximation.training.config import load_experiment_config
+from function_approximation.training.trainer import Trainer
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def set_seed(seed: int) -> None:
+    """Seed Python, NumPy, and PyTorch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def evaluate_splits(model, preprocessor, dataset):
+    """Evaluate a checkpoint on each split without gradients or updates."""
+    results = {}
+
+    for split in ("train", "val", "test"):
+        x, y = dataset[split]
+        predictions = predict_values(model, preprocessor, x)
+        results[split] = compute_metrics(y, predictions)
+
+    return results
+
+
+def run_experiment(config_path: str | Path) -> Path:
+    config_path = Path(config_path).resolve()
+    config = load_experiment_config(config_path)
+
+    experiment_cfg = config["experiment"]
+    data_cfg = config["data"]
+    preprocessing_cfg = config["preprocessing"]
+    model_cfg = config["model"]
+    training_cfg = config["training"]
+    evaluation_cfg = config["evaluation"]
+    tracking_cfg = config["tracking"]
+
+    seed = experiment_cfg["seed"]
+    set_seed(seed)
+
+    # Each execution receives a unique output directory.
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    run_name = experiment_cfg["run_name"]
+
+    output_root = PROJECT_ROOT / experiment_cfg["output_dir"]
+    output_dir = output_root / timestamp
+    output_dir.mkdir(parents=True, exist_ok=False)
+
+    # Save the exact configuration used for this execution.
+    with (output_dir / "config.yaml").open("w") as file:
+        yaml.safe_dump(config, file, sort_keys=False)
+
+    # --------------------------------------------------
+    # 1. Data generation
+    # --------------------------------------------------
+    generator = DataGenerator(
+        **data_cfg,
+        seed=seed,
+    )
+
+    raw_dataset = generator.generate()
+
+    # --------------------------------------------------
+    # 2. Preprocessing: fit on train only
+    # --------------------------------------------------
+    preprocessor = DataPreprocessor(**preprocessing_cfg)
+    processed_dataset = preprocessor.fit_transform_dataset(raw_dataset)
+
+    loaders = create_dataloaders(
+        processed_dataset,
+        batch_size=training_cfg["batch_size"],
+        seed=seed,
+    )
+
+    # --------------------------------------------------
+    # 3. Model initialization
+    # --------------------------------------------------
+    model_type = model_cfg["type"]
+
+    if model_type != "mlp":
+        raise ValueError(f"Unsupported model: {model_type}")
+
+    architecture = {
+        key: value
+        for key, value in model_cfg.items()
+        if key != "type"
+    }
+
+    model = MLPRegressor(**architecture)
+
+    trainer = Trainer(
+        model=model,
+        learning_rate=training_cfg["learning_rate"],
+        max_epochs=training_cfg["max_epochs"],
+        patience=training_cfg["patience"],
+        min_delta=training_cfg["min_delta"],
+        device=training_cfg["device"],
+    )
+
+    # --------------------------------------------------
+    # 4. Optional MLflow tracking
+    # --------------------------------------------------
+    tracking_enabled = tracking_cfg.get("enabled", False)
+
+    if tracking_enabled:
+        mlflow.set_tracking_uri(tracking_cfg["tracking_uri"])
+        mlflow.set_experiment(experiment_cfg["name"])
+
+    def execute_pipeline():
+        # Train and restore best validation checkpoint.
+        history = trainer.fit(
+            loaders["train"],
+            loaders["val"],
+        )
+
+        # Evaluate using original x and y coordinates.
+        metrics = evaluate_splits(
+            trainer.model,
+            preprocessor,
+            raw_dataset,
+        )
+
+        # Reconstruct a separate model; never replace the official weights.
+        # Preserve RNG state so diagnostics do not affect later execution.
+        with torch.random.fork_rng(devices=[]):
+            final_model = MLPRegressor(**architecture).to(trainer.device)
+        final_model.load_state_dict(trainer.final_model_state)
+        final_model.eval()
+        final_metrics = evaluate_splits(final_model, preprocessor, raw_dataset)
+
+        comparison = {
+            "best": {
+                "epoch": trainer.best_epoch,
+                "validation_loss": trainer.best_val_loss,
+                "metrics": metrics,
+            },
+            "final": {
+                "epoch": trainer.final_epoch,
+                "last_recorded_train_loss": history["train_loss"][-1],
+                "last_recorded_val_loss": history["val_loss"][-1],
+                "metrics": final_metrics,
+            },
+        }
+
+        print("\nCheckpoint diagnostics:")
+        print(f"Best validation epoch: {trainer.best_epoch}")
+        print(f"Final training epoch: {trainer.final_epoch}")
+        print(f"Best validation RMSE: {np.sqrt(trainer.best_val_loss):.6f}")
+        print(
+            "Last recorded training RMSE (during parameter updates): "
+            f"{np.sqrt(history['train_loss'][-1]):.6f}"
+        )
+        print(f"Last recorded validation RMSE: {np.sqrt(history['val_loss'][-1]):.6f}")
+        for split in ("train", "val", "test"):
+            print(
+                f"Recomputed {split:5s} RMSE | "
+                f"Best: {metrics[split]['rmse']:.6f} | "
+                f"Final: {final_metrics[split]['rmse']:.6f}"
+            )
+
+        # Save model and fitted preprocessor.
+        trainer.save_checkpoint(
+            output_dir / "best_model.pt",
+            model_config=architecture,
+        )
+        trainer.save_final_checkpoint(
+            output_dir / "final_model.pt",
+            model_config=architecture,
+        )
+
+        joblib.dump(
+            preprocessor,
+            output_dir / "preprocessor.joblib",
+        )
+
+        with (output_dir / "checkpoint_comparison.json").open("w") as file:
+            json.dump(comparison, file, indent=2, allow_nan=False)
+
+        # Use the persisted fitted preprocessor for both comparison curves.
+        comparison_preprocessor = joblib.load(output_dir / "preprocessor.joblib")
+        fig = plot_checkpoint_comparison(
+            best_model=trainer.model,
+            final_model=final_model,
+            preprocessor=comparison_preprocessor,
+            dataset=raw_dataset,
+            target_fn=generator.target_fn,
+            split_strategy=data_cfg["split_strategy"],
+            title=f"{run_name} — Checkpoint Comparison",
+            save_path=output_dir / "checkpoint_comparison.png",
+        )
+        plt.close(fig)
+
+        with (output_dir / "metrics.json").open("w") as file:
+            json.dump(metrics, file, indent=2)
+
+        with (output_dir / "history.json").open("w") as file:
+            json.dump(history, file, indent=2)
+
+        # Optional plots.
+        if evaluation_cfg.get("generate_plots", True):
+            figures = [
+                plot_learning_curves(
+                    history,
+                    best_epoch=trainer.best_epoch,
+                    title=f"{run_name} — Learning Curves",
+                    save_path=output_dir / "learning_curves.png",
+                ),
+                plot_predictions(
+                    model=trainer.model,
+                    preprocessor=preprocessor,
+                    dataset=raw_dataset,
+                    target_fn=generator.target_fn,
+                    title=f"{run_name} — Predictions",
+                    save_path=output_dir / "predictions.png",
+                ),
+                plot_residuals(
+                    model=trainer.model,
+                    preprocessor=preprocessor,
+                    dataset=raw_dataset,
+                    title=f"{run_name} — Residuals",
+                    save_path=output_dir / "residuals.png",
+                ),
+            ]
+
+            for fig in figures:
+                plt.close(fig)
+
+        # Optional prediction export.
+        if evaluation_cfg.get("save_predictions", False):
+            arrays = {}
+
+            for split, (x, y) in raw_dataset.items():
+                arrays[f"{split}_x"] = x
+                arrays[f"{split}_y"] = y
+                arrays[f"{split}_pred"] = predict_values(
+                    trainer.model,
+                    preprocessor,
+                    x,
+                )
+
+            np.savez_compressed(
+                output_dir / "predictions.npz",
+                **arrays,
+            )
+
+        print("\nEvaluation metrics:")
+        for split, values in metrics.items():
+            print(
+                f"{split:5s} | "
+                f"RMSE: {values['rmse']:.6f} | "
+                f"MAE: {values['mae']:.6f} | "
+                f"R²: {values['r2']:.6f}"
+            )
+
+        if tracking_enabled:
+            # Log all configuration fields as MLflow parameters.
+            for section in (
+                "data",
+                "preprocessing",
+                "model",
+                "training",
+            ):
+                for key, value in config[section].items():
+                    mlflow.log_param(f"{section}.{key}", value)
+
+            mlflow.log_param("seed", seed)
+            mlflow.log_param("split_strategy", data_cfg["split_strategy"])
+
+            # Log training curves as time-series metrics.
+            for epoch, (train_loss, val_loss) in enumerate(
+                zip(history["train_loss"], history["val_loss"]),
+                start=1,
+            ):
+                mlflow.log_metric(
+                    "train_loss",
+                    train_loss,
+                    step=epoch,
+                )
+                mlflow.log_metric(
+                    "val_loss",
+                    val_loss,
+                    step=epoch,
+                )
+                mlflow.log_metric("epoch_train_rmse", float(np.sqrt(train_loss)), step=epoch)
+                mlflow.log_metric("epoch_val_rmse", float(np.sqrt(val_loss)), step=epoch)
+
+            mlflow.log_metric("best_epoch", trainer.best_epoch)
+            mlflow.log_metric("final_epoch", trainer.final_epoch)
+            mlflow.log_metric("best_val_loss", trainer.best_val_loss)
+
+            for checkpoint, checkpoint_metrics in (
+                ("best", metrics), ("final", final_metrics),
+            ):
+                for split, values in checkpoint_metrics.items():
+                    for name, value in values.items():
+                        mlflow.log_metric(f"{checkpoint}_{split}_{name}", value)
+
+            for split, values in metrics.items():
+                for name, value in values.items():
+                    mlflow.log_metric(f"{split}_{name}", value)
+
+            # Store all locally generated outputs.
+            mlflow.log_artifacts(
+                str(output_dir),
+                artifact_path="experiment_outputs",
+            )
+
+        return metrics
+
+    if tracking_enabled:
+        with mlflow.start_run(run_name=run_name) as run:
+            print(f"MLflow run ID: {run.info.run_id}")
+            execute_pipeline()
+    else:
+        execute_pipeline()
+
+    print(f"\nExperiment completed: {output_dir}")
+    return output_dir
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run an experiment from a YAML configuration."
+    )
+
+    parser.add_argument(
+        "--config",
+        required=True,
+        type=str,
+        help="Path to experiment YAML file.",
+    )
+
+    args = parser.parse_args()
+    run_experiment(args.config)
+
+
+if __name__ == "__main__":
+    main()
