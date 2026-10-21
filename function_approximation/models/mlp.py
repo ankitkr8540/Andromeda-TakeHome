@@ -6,7 +6,22 @@ from torch import nn
 
 
 class MLPRegressor(nn.Module):
-    """Configurable multilayer perceptron for scalar regression."""
+    """Configurable Linear/Tanh hidden layers with a linear regression output.
+
+    Args:
+        input_dim: Number of input features; the experiment pipeline uses one.
+        hidden_dim: Width of every hidden layer.
+        num_hidden_layers: Number of Linear/Tanh hidden-layer pairs.
+        output_dim: Number of outputs; the pipeline uses one scalar target.
+
+    Raises:
+        ValueError: A dimension or hidden-layer count is nonpositive.
+
+    Notes:
+        Tanh supplies the nonlinearity. The output has no activation, allowing
+        regression values outside a bounded interval. Inputs must use the same
+        preprocessing at training and inference time.
+    """
 
     def __init__(
         self,
@@ -37,5 +52,13 @@ class MLPRegressor(nn.Module):
         self.network = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Predict function values for input tensor of shape (N, 1)."""
+        """Map a batch of inputs to regression values.
+
+        Args:
+            x: Tensor of shape ``(N, input_dim)`` on the model's device.
+
+        Returns:
+            Tensor of shape ``(N, output_dim)``. The shared Trainer requires
+            the target tensor to have exactly this shape.
+        """
         return self.network(x)

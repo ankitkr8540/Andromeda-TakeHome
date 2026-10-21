@@ -1,4 +1,3 @@
-
 """MLflow experiment tracking for the Andromeda take-home project."""
 
 import os
@@ -14,8 +13,7 @@ from function_approximation.data.generation import (
     Dataset,
 )
 
-
-DEFAULT_TRACKING_URI = "http://127.0.0.1:5000"
+DEFAULT_TRACKING_URI = "http://127.0.0.1:5001"
 DATA_EXPERIMENT_NAME = "data_generation"
 
 
@@ -32,17 +30,48 @@ def configure_mlflow(
 
     Returns:
         The configured tracking URI.
+
+    Notes:
+        URI precedence is an explicit argument, then ``MLFLOW_TRACKING_URI``,
+        then ``http://127.0.0.1:5001``. This contacts the tracking store to select
+        an experiment; it does not start a server or a training run.
     """
-    uri = (
-        tracking_uri
-        or os.getenv("MLFLOW_TRACKING_URI")
-        or DEFAULT_TRACKING_URI
-    )
+    uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI") or DEFAULT_TRACKING_URI
 
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(experiment_name)
 
     return uri
+
+
+def log_output_artifacts(output_dir: str | Path, tracking_config: dict) -> None:
+    """Upload run artifacts while honoring the YAML logging switches.
+
+    Local artifacts are always retained. Checkpoints, the preprocessor,
+    and figures can independently be excluded from MLflow uploads.
+
+    Args:
+        output_dir: Completed run directory; only immediate files are uploaded.
+        tracking_config: Logging flags. ``log_model`` controls ``.pt`` files,
+            ``log_preprocessor`` controls ``.joblib``, and ``log_figures`` controls
+            ``.png``. JSON reports and configuration files are always included.
+
+    Notes:
+        Requires an active MLflow run configured by the caller. This uploads
+        artifacts under ``experiment_outputs`` and does not register a model.
+    """
+    for path in sorted(Path(output_dir).iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix == ".pt" and not tracking_config.get("log_model", True):
+            continue
+        if path.suffix == ".joblib" and not tracking_config.get(
+            "log_preprocessor", True
+        ):
+            continue
+        if path.suffix == ".png" and not tracking_config.get("log_figures", True):
+            continue
+        mlflow.log_artifact(str(path), artifact_path="experiment_outputs")
 
 
 def _dataset_parameters(generator: DataGenerator) -> dict[str, Any]:
@@ -121,9 +150,7 @@ def log_data_experiment(
 
     if run_name is None:
         run_name = (
-            f"{generator.sampling}_"
-            f"{generator.split_strategy}_"
-            f"seed{generator.seed}"
+            f"{generator.sampling}_{generator.split_strategy}_seed{generator.seed}"
         )
 
     with mlflow.start_run(run_name=run_name) as run:
@@ -165,10 +192,7 @@ def log_data_experiment(
                 arrays[f"{split}_x"] = x
                 arrays[f"{split}_y"] = y
 
-            with mlflow.start_run(
-                run_id=run.info.run_id,
-                nested=False,
-            ) if False else _temporary_npz(arrays) as dataset_path:
+            with _temporary_npz(arrays) as dataset_path:
                 mlflow.log_artifact(
                     str(dataset_path),
                     artifact_path="datasets",
@@ -179,9 +203,7 @@ def log_data_experiment(
             config_file = Path(config_path)
 
             if not config_file.is_file():
-                raise FileNotFoundError(
-                    f"Configuration file not found: {config_file}"
-                )
+                raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
             mlflow.log_artifact(
                 str(config_file),
@@ -191,8 +213,8 @@ def log_data_experiment(
         return run.info.run_id
 
 
-from contextlib import contextmanager
 import tempfile
+from contextlib import contextmanager
 
 
 @contextmanager

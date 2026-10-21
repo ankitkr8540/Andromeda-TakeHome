@@ -31,10 +31,10 @@ model:
 # Training
 training:
   batch_size: 64
-  learning_rate: 0.001
+  learning_rate: 1e-3
   max_epochs: 2000
   patience: 150
-  min_delta: 0.000001
+  min_delta: 1e-6
   device: cpu
 
 # Evaluation

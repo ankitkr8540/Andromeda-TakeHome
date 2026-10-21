@@ -10,7 +10,18 @@ from function_approximation.data.generation import Dataset
 
 
 class DataPreprocessor:
-    """Leakage-safe preprocessing for synthetic regression data."""
+    """Fit an input transform on training observations and reuse it unchanged.
+
+    Args:
+        scaling: ``"standard"`` for training-mean/unit-scale inputs or
+            ``"none"`` to preserve original coordinates.
+
+    Raises:
+        ValueError: The scaling mode is unsupported.
+
+    Notes:
+        Targets are never standardized. Persist this object alongside a model.
+    """
 
     def __init__(
         self,
@@ -24,7 +35,17 @@ class DataPreprocessor:
         self.is_fitted = False
 
     def fit(self, x_train: np.ndarray) -> "DataPreprocessor":
-        """Fit input scaling using training data only."""
+        """Learn input statistics from a nonempty, finite training array.
+
+        Args:
+            x_train: Scalar training inputs, flattened to a column.
+
+        Returns:
+            This fitted preprocessor, including when scaling is disabled.
+
+        Raises:
+            ValueError: Inputs are empty or nonfinite.
+        """
         x_train = self._prepare_array(x_train)
 
         if self.scaler is not None:
@@ -34,7 +55,18 @@ class DataPreprocessor:
         return self
 
     def transform(self, x: np.ndarray) -> np.ndarray:
-        """Transform inputs using fitted training statistics."""
+        """Apply the fitted input transform without updating its statistics.
+
+        Args:
+            x: Nonempty finite scalar inputs, flattened to a column.
+
+        Returns:
+            Float32 array of shape ``(N, 1)`` for model input.
+
+        Raises:
+            RuntimeError: The preprocessor has not been fitted.
+            ValueError: Inputs are empty or nonfinite before conversion.
+        """
         if not self.is_fitted:
             raise RuntimeError("Preprocessor has not been fitted.")
 
@@ -46,7 +78,19 @@ class DataPreprocessor:
         return x.astype(np.float32)
 
     def inverse_transform(self, x: np.ndarray) -> np.ndarray:
-        """Convert scaled inputs back to original coordinates."""
+        """Convert a column of model-input coordinates to original x units.
+
+        Args:
+            x: Nonempty finite model inputs, flattened to ``(N, 1)``.
+
+        Returns:
+            Float64 inputs in original coordinates. With scaling disabled,
+            this validates and reshapes the supplied values.
+
+        Raises:
+            RuntimeError: The preprocessor has not been fitted.
+            ValueError: Inputs are empty or nonfinite.
+        """
         if not self.is_fitted:
             raise RuntimeError("Preprocessor has not been fitted.")
 
@@ -58,7 +102,20 @@ class DataPreprocessor:
         return x
 
     def fit_transform_dataset(self, dataset: Dataset) -> Dataset:
-        """Fit on training inputs and transform every split."""
+        """Fit using ``dataset['train'][0]`` and transform each supplied split.
+
+        Args:
+            dataset: Mapping from split names to ``(x, y)`` arrays.
+
+        Returns:
+            A new mapping containing float32 input/target columns. Only x is
+            scaled; targets retain their original units. Validation and test
+            inputs do not contribute to fitted statistics.
+
+        Raises:
+            KeyError: The training split is missing.
+            ValueError: An input or target array is empty or nonfinite.
+        """
         self.fit(dataset["train"][0])
 
         processed = {}

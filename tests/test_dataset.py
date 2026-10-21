@@ -3,12 +3,12 @@ import numpy as np
 import pytest
 import torch
 
-from function_approximation.data.generation import DataGenerator
-from function_approximation.data.preprocessing import DataPreprocessor
 from function_approximation.data.dataset import (
     FunctionDataset,
     create_dataloaders,
 )
+from function_approximation.data.generation import DataGenerator
+from function_approximation.data.preprocessing import DataPreprocessor
 
 
 @pytest.fixture

@@ -10,12 +10,12 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
 
-
 Array = NDArray[np.float64]
 Dataset = dict[str, tuple[Array, Array]]
 
 SamplingStrategy = Literal["uniform", "grid"]
 SplitStrategy = Literal["random", "chronological"]
+TargetName = Literal["rich_periodic", "damped_oscillation"]
 
 
 class DataGenerator:
@@ -26,6 +26,27 @@ class DataGenerator:
     The ground-truth function is used only to generate labels and
     optional exploratory visualizations. Models must learn exclusively
     from the generated training examples.
+
+    Args:
+        n_train: Positive training sample count.
+        n_val: Positive validation sample count.
+        n_test: Positive final evaluation sample count.
+        x_min: Inclusive lower sampling boundary.
+        x_max: Upper boundary; uniform draws exclude it, grid sampling includes it.
+        seed: Seed for an independent NumPy random generator.
+        sampling: ``"uniform"`` random inputs or an evenly spaced ``"grid"``.
+        split_strategy: ``"random"`` permutation or ``"chronological"`` sorting
+            before partitioning into nonoverlapping splits.
+        target: Built-in synthetic target used when ``target_fn`` is omitted.
+        target_fn: Optional vectorized label generator returning one finite value
+            per input. It takes precedence over the named built-in target.
+
+    Raises:
+        ValueError: Counts, sampling boundaries, or strategy names are invalid.
+
+    Notes:
+        Direct generation permits one observation per split. The experiment
+        configuration requires at least two because evaluation reports R-squared.
     """
 
     def __init__(
@@ -38,6 +59,7 @@ class DataGenerator:
         seed: int = 42,
         sampling: SamplingStrategy = "uniform",
         split_strategy: SplitStrategy = "random",
+        target: TargetName = "rich_periodic",
         target_fn: Callable[[Array], Array] | None = None,
     ) -> None:
         self.n_train = n_train
@@ -50,18 +72,40 @@ class DataGenerator:
         self.seed = seed
         self.sampling = sampling
         self.split_strategy = split_strategy
+        self.target = target
 
-        self.target_fn = (
-            target_fn if target_fn is not None
-            else self._target_function
-        )
+        if target_fn is not None:
+            self.target_fn = target_fn
+        elif target == "rich_periodic":
+            self.target_fn = self._target_function
+        elif target == "damped_oscillation":
+            self.target_fn = self._damped_oscillation
+        else:
+            raise ValueError(f"Unsupported target: {target}")
 
         self._validate_config()
 
     @staticmethod
     def _target_function(x: Array) -> Array:
-        """Default synthetic black-box target function."""
-        return np.sin(x) + 0.3 * np.sin(3.0 * x)
+        """Return a richer bounded periodic target for the default experiment.
+
+        The generator knows this expression only to create labels and reference
+        plots. Models receive sampled input/output pairs and are not given its
+        harmonic frequencies or phases.
+        """
+        return (
+            1.00 * np.sin(x)
+            + 0.55 * np.cos(2.0 * x)
+            + 0.35 * np.sin(3.0 * x + 0.40)
+            + 0.20 * np.cos(5.0 * x - 0.70)
+            + 0.12 * np.sin(7.0 * x)
+            + 0.08 * np.cos(11.0 * x + 0.20)
+        )
+
+    @staticmethod
+    def _damped_oscillation(x: Array) -> Array:
+        """Return a nonstationary damped-oscillation target for experiments."""
+        return np.exp(-0.1 * x) * np.sin(x) + 0.5 * np.cos(2.0 * x)
 
     def _validate_config(self) -> None:
         """Validate dataset configuration before generation."""
@@ -148,7 +192,13 @@ class DataGenerator:
         Chronological splitting evaluates extrapolation to larger x.
 
         Returns:
-            Dictionary mapping split names to (x, y) arrays.
+            Dictionary with ``train``, ``val``, and ``test`` entries, each an
+            ``(x, y)`` pair of one-dimensional float64 arrays. Repeated calls
+            with the same settings reproduce the same sample pairs.
+
+        Raises:
+            ValueError: The target callable returns an incompatible shape or
+                nonfinite labels.
         """
 
         rng = np.random.default_rng(self.seed)
@@ -203,7 +253,17 @@ class DataGenerator:
         show_target: bool = True,
         figsize: tuple[float, float] = (12, 5),
     ) -> tuple[Figure, Axes]:
-        """Visualize the generated dataset and optional ground truth."""
+        """Visualize existing sample splits and an optional target reference.
+
+        Args:
+            dataset: Generated split mapping; this method does not generate data.
+            show_target: Whether to call the target on a dense visual reference grid.
+            figsize: Matplotlib figure size in inches.
+
+        Returns:
+            Figure and axes. The caller owns the figure and should close it
+            after saving or displaying it.
+        """
 
         fig, ax = plt.subplots(figsize=figsize)
 

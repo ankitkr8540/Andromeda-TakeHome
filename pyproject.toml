@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=3.0.6",
     "pyyaml>=6.0.3",
     "scikit-learn>=1.9.1",
+    "scipy>=1.17.1",
     "torch>=2.14.1",
 ]
 
@@ -30,4 +31,8 @@ module-root = ""
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.17.1",
+]
+docs = [
+    "myst-parser>=4,<5",
+    "sphinx>=8.2,<9",
 ]

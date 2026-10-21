@@ -225,6 +225,7 @@ def test_short_experiment_artifacts_and_metrics(tmp_path, monkeypatch, config_na
         "predictions.png",
         "residuals.png",
         "predictions.npz",
+        "baseline_metrics.json",
     }
     assert expected_artifacts <= {path.name for path in output.iterdir()}
     comparison = json.loads((output / "checkpoint_comparison.json").read_text())
@@ -243,6 +244,16 @@ def test_short_experiment_artifacts_and_metrics(tmp_path, monkeypatch, config_na
         **config["data"], seed=config["experiment"]["seed"]
     ).generate()
     preprocessor = joblib.load(output / "preprocessor.joblib")
+    baseline = json.loads((output / "baseline_metrics.json").read_text())
+    assert baseline["prediction"] == pytest.approx(float(np.mean(dataset["train"][1])))
+    from function_approximation.inference import load_predictor
+
+    predictor = load_predictor(output)
+    exported = np.load(output / "predictions.npz")
+    np.testing.assert_array_equal(
+        predictor.predict(dataset["test"][0]),
+        exported["test_pred"],
+    )
     for name in ("best", "final"):
         checkpoint = torch.load(output / f"{name}_model.pt", weights_only=True)
         model = MLPRegressor(**checkpoint["model_config"])
@@ -261,10 +272,17 @@ def test_short_experiment_artifacts_and_metrics(tmp_path, monkeypatch, config_na
     assert run.info.status == "FINISHED"
     assert run.data.metrics["final_epoch"] == comparison["final"]["epoch"]
     assert run.data.metrics["best_epoch"] == comparison["best"]["epoch"]
+    assert (
+        run.data.metrics["baseline_train_rmse"] == baseline["metrics"]["train"]["rmse"]
+    )
     client = mlflow.MlflowClient()
     rmse_history = client.get_metric_history(run.info.run_id, "epoch_val_rmse")
-    assert [metric.step for metric in rmse_history] == list(range(1, len(history["val_loss"]) + 1))
-    np.testing.assert_allclose([metric.value for metric in rmse_history], np.sqrt(history["val_loss"]))
+    assert [metric.step for metric in rmse_history] == list(
+        range(1, len(history["val_loss"]) + 1)
+    )
+    np.testing.assert_allclose(
+        [metric.value for metric in rmse_history], np.sqrt(history["val_loss"])
+    )
     for name in ("best", "final"):
         for split in ("train", "val", "test"):
             assert (

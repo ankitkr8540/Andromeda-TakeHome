@@ -1,16 +1,15 @@
-
 """Visualization utilities for function approximation experiments."""
 
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 from matplotlib.figure import Figure
 from torch import nn
 
 from function_approximation.data.generation import Dataset
 from function_approximation.data.preprocessing import DataPreprocessor
+from function_approximation.inference import predict_values
 
 
 def _save_figure(
@@ -26,32 +25,6 @@ def _save_figure(
     fig.savefig(path, dpi=200, bbox_inches="tight")
 
 
-def predict_values(
-    model: nn.Module,
-    preprocessor: DataPreprocessor,
-    x: np.ndarray,
-) -> np.ndarray:
-    """Generate predictions in the original input coordinate system.
-
-    The ground-truth function is never called.
-    """
-    x = np.asarray(x, dtype=np.float64).reshape(-1, 1)
-    x_processed = preprocessor.transform(x)
-
-    device = next(model.parameters()).device
-    x_tensor = torch.from_numpy(x_processed).to(device)
-
-    was_training = model.training
-    model.eval()
-
-    try:
-        with torch.inference_mode():
-            predictions = model(x_tensor)
-            return predictions.detach().cpu().numpy().ravel()
-    finally:
-        model.train(was_training)
-
-
 def plot_learning_curves(
     history: dict[str, list[float]],
     best_epoch: int | None = None,
@@ -62,6 +35,18 @@ def plot_learning_curves(
 
     Training values summarize batches during parameter updates, rather than
     a fresh evaluation of the completed epoch's model.
+
+    Args:
+        history: Nonempty equal-length ``train_loss`` and ``val_loss`` MSE lists.
+        best_epoch: Optional one-based selected epoch to mark.
+        title: Figure title.
+        save_path: Optional image filename; parent directories are created.
+
+    Returns:
+        Matplotlib figure owned by the caller. Close it after use.
+
+    Raises:
+        ValueError: Histories are incompatible or the marked epoch is out of range.
     """
     train_loss = np.sqrt(np.asarray(history["train_loss"]))
     val_loss = np.sqrt(np.asarray(history["val_loss"]))
@@ -114,13 +99,24 @@ def plot_predictions(
 
     Optionally accepts target_fn for a dense reference curve.
     Ground truth is used only for visualization, never inference.
+
+    Args:
+        model: Fitted scalar regression model.
+        preprocessor: Its fitted training input transform.
+        dataset: Original-coordinate split mapping of ``(x, y)`` arrays.
+        target_fn: Optional callable for the dense visual reference only.
+        title: Figure title.
+        save_path: Optional output image filename.
+        n_points: At least two prediction-grid locations across observed x.
+
+    Returns:
+        Figure with prediction/reference curves and a split-coverage panel.
+        The caller should close it after use.
     """
     if n_points < 2:
         raise ValueError("n_points must be at least 2.")
 
-    x_all = np.concatenate(
-        [dataset[s][0].ravel() for s in ("train", "val", "test")]
-    )
+    x_all = np.concatenate([dataset[s][0].ravel() for s in ("train", "val", "test")])
 
     x_grid = np.linspace(x_all.min(), x_all.max(), n_points)
     y_pred = predict_values(model, preprocessor, x_grid)
@@ -136,7 +132,7 @@ def plot_predictions(
     ax.plot(
         x_grid,
         y_pred,
-        label="MLP prediction",
+        label=f"{getattr(model, 'model_type', 'mlp').upper()} prediction",
         color="tab:orange",
         linewidth=2,
     )
@@ -223,6 +219,20 @@ def plot_checkpoint_comparison(
     is evaluated only for the reference curve, never for model inference.
     Shaded chronological regions show observed split ranges; random splits
     overlap and therefore receive no sequential regions.
+
+    Args:
+        best_model: Model holding selected validation weights.
+        final_model: Separate model holding final-epoch weights.
+        preprocessor: Shared fitted training transform; never refitted here.
+        dataset: Original-coordinate split mapping.
+        target_fn: Label callable used only for the dense reference curve.
+        split_strategy: ``"random"`` or ``"chronological"`` coverage semantics.
+        title: Figure title.
+        save_path: Optional output image filename.
+        n_points: Prediction-grid size, at least two.
+
+    Returns:
+        Matplotlib figure owned by the caller. Neither model's weights are changed.
     """
     if n_points < 2:
         raise ValueError("n_points must be at least 2.")
@@ -235,12 +245,28 @@ def plot_checkpoint_comparison(
     final_predictions = predict_values(final_model, preprocessor, x_grid)
 
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(x_grid, np.asarray(target_fn(x_grid)).ravel(),
-            color="black", alpha=0.7, label="Ground truth")
-    ax.plot(x_grid, best_predictions, label="Best-validation checkpoint",
-            color="tab:blue", linewidth=2)
-    ax.plot(x_grid, final_predictions, label="Final-epoch checkpoint",
-            color="tab:orange", linestyle="--", linewidth=2)
+    ax.plot(
+        x_grid,
+        np.asarray(target_fn(x_grid)).ravel(),
+        color="black",
+        alpha=0.7,
+        label="Ground truth",
+    )
+    ax.plot(
+        x_grid,
+        best_predictions,
+        label="Best-validation checkpoint",
+        color="tab:blue",
+        linewidth=2,
+    )
+    ax.plot(
+        x_grid,
+        final_predictions,
+        label="Final-epoch checkpoint",
+        color="tab:orange",
+        linestyle="--",
+        linewidth=2,
+    )
 
     if split_strategy == "chronological":
         for split, label, color in (
@@ -249,8 +275,9 @@ def plot_checkpoint_comparison(
             ("test", "Test region", "tab:red"),
         ):
             x = dataset[split][0]
-            ax.axvspan(float(x.min()), float(x.max()),
-                       color=color, alpha=0.1, label=label)
+            ax.axvspan(
+                float(x.min()), float(x.max()), color=color, alpha=0.1, label=label
+            )
 
     ax.set(xlabel="Original input x", ylabel="f(x)", title=title)
     ax.legend(fontsize=8, ncol=2)
@@ -270,6 +297,16 @@ def plot_residuals(
     """Plot prediction residuals for each dataset split.
 
     Residual = observed target - predicted target.
+
+    Args:
+        model: Fitted scalar regression model.
+        preprocessor: Its fitted training input transform.
+        dataset: Original-coordinate split mapping of observations.
+        title: Figure title.
+        save_path: Optional output image filename.
+
+    Returns:
+        Figure with residual scatter points by split, owned by the caller.
     """
     fig, ax = plt.subplots(figsize=(12, 4.5))
 

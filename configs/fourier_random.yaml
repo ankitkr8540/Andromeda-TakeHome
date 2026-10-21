@@ -1,0 +1,42 @@
+experiment:
+  name: fourier_regression
+  run_name: fourier_random_spectral_none_seed42
+  seed: 42
+  output_dir: outputs/fourier_random_spectral_none_seed42
+data:
+  n_train: 840
+  n_val: 140
+  n_test: 420
+  x_min: -31.41592653589793
+  x_max: 31.41592653589793
+  sampling: uniform
+  split_strategy: random
+preprocessing:
+  scaling: none
+model:
+  type: fourier
+  num_frequencies: 8
+  frequency_min: 0.1
+  frequency_max: 5.0
+training:
+  batch_size: 64
+  learning_rate: 1e-3
+  max_epochs: 30000
+  patience: 3000
+  min_delta: 1e-12
+  device: cpu
+  fourier_initialization: spectral
+evaluation:
+  metrics:
+  - mse
+  - rmse
+  - mae
+  - r2
+  generate_plots: true
+  save_predictions: true
+tracking:
+  enabled: true
+  tracking_uri: http://127.0.0.1:5001
+  log_model: true
+  log_preprocessor: true
+  log_figures: true
