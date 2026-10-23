@@ -1,4 +1,16 @@
-"""Predict from saved artifacts without evaluating the target function."""
+"""Load an output run and predict without training or evaluating the target.
+
+Python usage::
+
+    predictor = load_predictor("outputs/<model>/<target>/<run>")
+    predictions = predictor.predict([-10.0, 0.0, 100.0])
+
+Terminal usage::
+
+    python -m function_approximation.inference --run-dir outputs/<run> --x -10 0 100
+
+The run directory must contain best_model.pt and its matching preprocessor.joblib.
+"""
 
 import argparse
 import json
@@ -18,31 +30,25 @@ def predict_values(
     preprocessor: DataPreprocessor,
     x: np.ndarray,
 ) -> np.ndarray:
-    """Predict from original x coordinates using a fitted input preprocessor.
+    """Predict from original-coordinate inputs without labels or target evaluations.
 
     Args:
-        model: A fitted scalar regression module with at least one parameter.
-        preprocessor: Training-fitted transform associated with these weights.
-        x: Nonempty finite inputs of shape ``(N,)`` or ``(N, 1)``; a scalar
-            is also accepted as one observation.
+        model: Fitted PyTorch model returning one scalar per input.
+        preprocessor: Fitted input transform saved with the model.
+        x: Finite scalar, vector, or column of original input coordinates.
 
     Returns:
-        Flat NumPy array of ``N`` predictions in original target units.
+        Flat NumPy prediction array of shape ``(N,)`` in target units.
 
     Raises:
-        ValueError: Input or prediction shapes are invalid, or transformed
-            inputs cannot be represented as finite float32 values.
-        RuntimeError: The preprocessor has not been fitted.
-        FloatingPointError: Model predictions are nonfinite.
+        RuntimeError: Preprocessing is unfitted.
+        ValueError: Input values/shapes are invalid or model output shape differs.
+        FloatingPointError: Model predictions contain nonfinite values.
 
     Notes:
-        Gradients are disabled. The caller's model training/evaluation mode is
-        restored, even if prediction fails. No labels or target function are used.
-    """
-    x = np.asarray(x, dtype=np.float64)
-    if x.ndim > 2 or (x.ndim == 2 and x.shape[1] != 1):
-        raise ValueError("Expected scalar inputs with shape (N,) or (N, 1).")
-    x_processed = preprocessor.transform(x.reshape(-1, 1))
+        Disables gradients, uses the model's device, and restores its original
+        training/evaluation mode even if prediction fails."""
+    x_processed = preprocessor.transform(x)
     if not np.isfinite(x_processed).all():
         raise ValueError("Preprocessed inputs must be finite in float32.")
     device = next(model.parameters()).device
@@ -56,58 +62,72 @@ def predict_values(
                 raise ValueError("Model must return one scalar prediction per input.")
             if not torch.isfinite(predictions).all():
                 raise FloatingPointError("Model produced nonfinite predictions.")
-            return predictions.detach().cpu().numpy().ravel()
+            return predictions.cpu().numpy().ravel()
     finally:
         model.train(was_training)
 
 
 class Predictor:
-    """Pair learned parameters with their training-fitted input transform.
-
-    Args:
-        model: Fitted regression module; it is placed in evaluation mode.
-        preprocessor: Fitted input transform corresponding to the model.
-    """
+    """Keep a loaded model and its fitted preprocessing together for prediction."""
 
     def __init__(self, model: nn.Module, preprocessor: DataPreprocessor) -> None:
+        """Attach a model and fitted preprocessor; put the model into evaluation mode."""
         self.model = model.eval()
         self.preprocessor = preprocessor
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        """Return a flat prediction array for unscaled scalar inputs.
+        """Predict one value per original-coordinate input using saved preprocessing.
 
         Args:
-            x: Original-coordinate inputs accepted by :func:`predict_values`.
+            x: Finite scalar, vector, or column; may lie outside the training window.
 
         Returns:
-            One prediction per observation, without fitting or consuming labels.
-        """
+            Flat NumPy prediction array. No labels or reference function are required.
+
+        Notes:
+            Delegates validation and errors to ``predict_values``. Extrapolation
+            is allowed, but its accuracy is not guaranteed."""
         return predict_values(self.model, self.preprocessor, x)
 
 
 def load_predictor(run_dir: str | Path, device: str = "cpu") -> Predictor:
-    """Reconstruct best_model.pt and preprocessor.joblib from one run.
-
-    Only load artifacts produced by a trusted experiment: joblib files use
-    Python pickle serialization. No labels or target function are needed.
+    """Reconstruct a fitted predictor from trusted experiment artifacts.
 
     Args:
-        run_dir: Timestamped run directory containing both required artifacts.
-        device: PyTorch device for reconstructed parameters; CPU by default.
+        run_dir: Directory containing ``best_model.pt`` and
+            ``preprocessor.joblib`` from the same experiment run.
+        device: PyTorch device on which to load and evaluate the model.
 
     Returns:
-        A Predictor ready to evaluate original-coordinate inputs.
+        Predictor containing the selected weights and fitted input transform.
 
     Raises:
-        FileNotFoundError: A required checkpoint or preprocessor is missing.
-        ValueError: Parameters are nonfinite, the model family is unsupported,
-            or the loaded preprocessor is invalid or unfitted.
-        RuntimeError: Checkpoint tensor shapes do not match the architecture.
-    """
+        FileNotFoundError: A required artifact is missing.
+        ValueError: Parameters are nonfinite or preprocessing is invalid/unfitted.
+        RuntimeError: Saved weights do not match the reconstructed architecture.
+
+    Notes:
+        Loading does not generate labels or train the model. Joblib uses pickle:
+        only load artifacts from trusted sources. Other deserialization errors
+        propagate from PyTorch/joblib."""
     run_dir = Path(run_dir)
+    for name in ("best_model.pt", "preprocessor.joblib"):
+        if not (run_dir / name).is_file():
+            raise FileNotFoundError(
+                f"Missing inference artifact: {run_dir / name}. "
+                "Choose the output run directory containing best_model.pt "
+                "and preprocessor.joblib."
+            )
     checkpoint = torch.load(
         run_dir / "best_model.pt", map_location=device, weights_only=True
     )
+    if not isinstance(checkpoint, dict) or not all(
+        isinstance(checkpoint.get(key), dict)
+        for key in ("model_config", "model_state_dict")
+    ):
+        raise ValueError(
+            "Expected a checkpoint mapping with model_config and model_state_dict mappings."
+        )
     model = build_model(
         checkpoint.get("model_type", "mlp"), checkpoint["model_config"]
     ).to(device)
@@ -125,7 +145,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Predict using a saved best-validation model."
     )
-    parser.add_argument("--run-dir", required=True, type=Path)
+    parser.add_argument(
+        "--run-dir",
+        required=True,
+        type=Path,
+        help="Output run directory containing best_model.pt and preprocessor.joblib.",
+    )
     parser.add_argument(
         "--x",
         required=True,

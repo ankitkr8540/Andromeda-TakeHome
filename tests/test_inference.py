@@ -1,5 +1,8 @@
 """Predict only from saved model/preprocessor artifacts."""
 
+import json
+import subprocess
+import sys
 from unittest.mock import Mock
 
 import joblib
@@ -76,3 +79,78 @@ def test_nonfinite_checkpoint_rejected(saved_artifacts):
     torch.save(checkpoint, path / "best_model.pt")
     with pytest.raises(ValueError, match="nonfinite"):
         load_predictor(path)
+
+
+@pytest.mark.parametrize(
+    "kind,architecture",
+    [
+        ("mlp", {"hidden_dims": [4, 8]}),
+        ("snake", {"dims": [4, 8]}),
+        ("fourier", {"num_frequencies": 4}),
+    ],
+)
+@pytest.mark.parametrize("scaling", ["none", "standard"])
+def test_output_directory_loads_each_model_with_saved_preprocessing(
+    tmp_path, kind, architecture, scaling
+):
+    torch.manual_seed(42)
+    model = build_model(kind, architecture)
+    preprocessor = DataPreprocessor(scaling).fit(np.array([-30.0, 0.0, 30.0]))
+    torch.save(
+        {
+            "model_type": kind,
+            "model_config": architecture,
+            "model_state_dict": model.state_dict(),
+        },
+        tmp_path / "best_model.pt",
+    )
+    joblib.dump(preprocessor, tmp_path / "preprocessor.joblib")
+    x = np.array([-40.0, 0.25, 180.0])
+    expected = predict_values(model, preprocessor, x)
+    predictor = load_predictor(tmp_path)
+    np.testing.assert_array_equal(predictor.predict(x), expected)
+    np.testing.assert_array_equal(
+        predictor.predict(0.25), predict_values(model, preprocessor, np.array(0.25))
+    )
+
+
+@pytest.mark.parametrize("name", ["best_model.pt", "preprocessor.joblib"])
+def test_missing_artifact_explains_required_output_directory(saved_artifacts, name):
+    path, _, _ = saved_artifacts
+    (path / name).unlink()
+    with pytest.raises(FileNotFoundError, match=name):
+        load_predictor(path)
+
+
+@pytest.mark.parametrize("checkpoint", [[], {}, {"model_config": []}])
+def test_malformed_checkpoint_has_clear_error(saved_artifacts, checkpoint):
+    path, _, _ = saved_artifacts
+    torch.save(checkpoint, path / "best_model.pt")
+    with pytest.raises(ValueError, match="checkpoint mapping"):
+        load_predictor(path)
+
+
+def test_cli_loads_output_and_returns_predictions_as_json(saved_artifacts):
+    path, model, preprocessor = saved_artifacts
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "function_approximation.inference",
+            "--run-dir",
+            str(path),
+            "--x",
+            "-40",
+            "0.25",
+            "180",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["x"] == [-40.0, 0.25, 180.0]
+    np.testing.assert_array_equal(
+        payload["predictions"],
+        predict_values(model, preprocessor, np.array(payload["x"])),
+    )
