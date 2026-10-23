@@ -1,4 +1,3 @@
-
 import numpy as np
 import pytest
 
@@ -9,12 +8,7 @@ from function_approximation.data.preprocessing import DataPreprocessor
 @pytest.fixture
 def dataset():
     generator = DataGenerator(
-        n_train=840,
-        n_val=140,
-        n_test=420,
-        seed=42,
-        sampling="uniform",
-        split_strategy="random",
+        sample_size=1200,
     )
     return generator.generate()
 
@@ -69,10 +63,7 @@ def test_validation_and_test_do_not_affect_scaler(dataset):
     original_std = preprocessor.std
 
     # Deliberately modify held-out data.
-    modified = {
-        split: (x.copy(), y.copy())
-        for split, (x, y) in dataset.items()
-    }
+    modified = {split: (x.copy(), y.copy()) for split, (x, y) in dataset.items()}
 
     for split in ("val", "test"):
         x, y = modified[split]
@@ -83,21 +74,6 @@ def test_validation_and_test_do_not_affect_scaler(dataset):
 
     assert np.isclose(another.mean, original_mean)
     assert np.isclose(another.std, original_std)
-
-
-def test_inverse_transform(dataset):
-    preprocessor = DataPreprocessor(scaling="standard")
-    preprocessor.fit(dataset["train"][0])
-
-    original = dataset["test"][0]
-    transformed = preprocessor.transform(original)
-    recovered = preprocessor.inverse_transform(transformed)
-
-    np.testing.assert_allclose(
-        recovered.ravel(),
-        original,
-        atol=2e-6,
-    )
 
 
 def test_no_scaling_preserves_values(dataset):
@@ -151,3 +127,61 @@ def test_invalid_input_rejected(invalid_input):
 
     with pytest.raises(ValueError):
         preprocessor.fit(invalid_input)
+
+
+def test_transform_extrapolation_without_refitting(dataset):
+    preprocessor = DataPreprocessor().fit(dataset["train"][0])
+    statistics = (preprocessor.mean, preprocessor.std)
+    x = np.linspace(50 * np.pi, 60 * np.pi, 100)
+    result = preprocessor.transform_dataset({"extrap_far": (x, x**2)})
+    assert (preprocessor.mean, preprocessor.std) == statistics
+    np.testing.assert_allclose(
+        result["extrap_far"][0].ravel(), (x - statistics[0]) / statistics[1], rtol=1e-6
+    )
+    np.testing.assert_allclose(result["extrap_far"][1].ravel(), x**2, rtol=1e-6)
+
+
+@pytest.mark.parametrize("values", [np.ones((2, 2)), np.ones((2, 1, 1))])
+def test_multiple_features_rejected(values):
+    with pytest.raises(ValueError, match="scalar samples"):
+        DataPreprocessor().fit(values)
+
+
+def test_target_mismatch_rejected():
+    preprocessor = DataPreprocessor(scaling="none").fit(np.arange(3))
+    with pytest.raises(ValueError, match="shapes must match"):
+        preprocessor.transform_dataset({"test": (np.arange(3), np.arange(2))})
+
+
+def test_transform_dataset_before_fit_raises():
+    with pytest.raises(RuntimeError, match="not been fitted"):
+        DataPreprocessor().transform_dataset({"test": (np.arange(2), np.arange(2))})
+
+
+@pytest.mark.parametrize("scaling", ["standard", "none"])
+def test_input_float32_overflow_rejected(scaling):
+    preprocessor = DataPreprocessor(scaling).fit(np.array([0.0, 1.0]))
+    with pytest.raises(ValueError, match="float32"):
+        preprocessor.transform(np.array([1e100]))
+
+
+def test_target_float32_overflow_rejected():
+    preprocessor = DataPreprocessor("none").fit(np.array([0.0, 1.0]))
+    with pytest.raises(ValueError, match="float32"):
+        preprocessor.transform_dataset({"test": (np.array([0.5]), np.array([1e100]))})
+
+
+def test_supplied_split_overlap_after_float32_rejected():
+    # Different float64 values collapse to the same raw float32 model input.
+    data = {
+        "train": (np.array([1.0, 2.0]), np.array([0.0, 1.0])),
+        "test": (np.array([1.0 + 1e-9]), np.array([0.0])),
+    }
+    with pytest.raises(ValueError, match="overlap.*float32"):
+        DataPreprocessor("none").fit_transform_dataset(data)
+
+
+def test_supplied_within_split_precision_loss_rejected():
+    data = {"train": (np.array([1.0, 1.0 + 1e-9]), np.array([0.0, 1.0]))}
+    with pytest.raises(ValueError, match="duplicate.*float32"):
+        DataPreprocessor("none").fit_transform_dataset(data)

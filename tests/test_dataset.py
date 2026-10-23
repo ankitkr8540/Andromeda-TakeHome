@@ -14,10 +14,7 @@ from function_approximation.data.preprocessing import DataPreprocessor
 @pytest.fixture
 def processed_data():
     generator = DataGenerator(
-        n_train=840,
-        n_val=140,
-        n_test=420,
-        seed=42,
+        sample_size=1200,
     )
 
     dataset = generator.generate()
@@ -86,8 +83,8 @@ def test_dataloader_batch_count(processed_data):
     )
 
     assert len(loaders["train"]) == 14
-    assert len(loaders["val"]) == 3
-    assert len(loaders["test"]) == 7
+    assert len(loaders["val"]) == 2
+    assert len(loaders["test"]) == 4
 
 
 def test_dataloader_reproducibility(processed_data):
@@ -161,3 +158,21 @@ def test_nonfinite_data_rejected(invalid_value):
 
     with pytest.raises(ValueError):
         FunctionDataset(x, y)
+
+
+@pytest.mark.parametrize('values', [np.array([]), np.ones((2, 2)), np.ones((2, 1, 1)), np.array([1e100])])
+def test_invalid_scalar_dataset(values):
+    with pytest.raises(ValueError):
+        FunctionDataset(values, values)
+
+
+@pytest.mark.parametrize('batch_size', [True, 1.5, -1])
+def test_invalid_batch_size_type(processed_data, batch_size):
+    with pytest.raises(ValueError, match='positive integer'):
+        create_dataloaders(processed_data, batch_size=batch_size)
+
+
+def test_extrapolation_not_loaded_for_training(processed_data):
+    data = {**processed_data, 'extrap_far': (np.array([1000.]), np.array([0.]))}
+    loaders = create_dataloaders(data)
+    assert set(loaders) == {'train', 'val', 'test'}

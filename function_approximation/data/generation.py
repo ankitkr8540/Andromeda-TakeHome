@@ -1,23 +1,102 @@
 """Reproducible synthetic data generation for function approximation."""
 
-from typing import TypeAlias
+from __future__ import annotations
 
-import matplotlib.pyplot as plt
+import math
+import re
+from numbers import Integral, Real
+from typing import TYPE_CHECKING, TypeAlias
+
 import numpy as np
-from matplotlib.figure import Figure
 from numpy.typing import NDArray
 
 from function_approximation.data.dataset import rich_periodic
 
-Array: TypeAlias = NDArray[np.float64]
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
+
+Array: TypeAlias = NDArray[np.float32] | NDArray[np.float64]
 Dataset: TypeAlias = dict[str, tuple[Array, Array]]
 
 
 def split_counts(sample_size: int) -> tuple[int, int, int]:
-    """Allocate 70:10:20, rounding train/validation down and keeping the remainder."""
+    """Allocate an in-domain sample budget using a 70:10:20 ratio.
+
+    Args:
+        sample_size: Integer total of at least 20; booleans are rejected.
+
+    Returns:
+        Tuple ``(n_train, n_val, n_test)``. Training and validation counts are
+        rounded down; testing receives the remainder so the total is preserved.
+
+    Raises:
+        ValueError: The sample budget is not an integer of at least 20."""
+    if (
+        isinstance(sample_size, bool)
+        or not isinstance(sample_size, Integral)
+        or sample_size < 20
+    ):
+        raise ValueError("data.sample_size must be an integer >= 20.")
     n_train = 7 * int(sample_size) // 10
     n_val = int(sample_size) // 10
     return n_train, n_val, int(sample_size) - n_train - n_val
+
+
+def _validate_interval(lower: float, upper: float, prefix: str) -> None:
+    """Reject nonfinite, reversed, zero-width, or overflowing intervals with field context."""
+    for name, value in (("x_min", lower), ("x_max", upper)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, Real)
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"{prefix}.{name} must be a finite number.")
+    if lower >= upper:
+        raise ValueError(f"{prefix}.x_min must be less than x_max.")
+    if not math.isfinite(upper - lower):
+        raise ValueError(f"{prefix} interval span must be finite.")
+
+
+def _validate_bands(bands: list[dict] | None) -> list[dict]:
+    """Validate evaluation-band mappings and return independent copies of their settings."""
+    if bands is None:
+        return []
+    if not isinstance(bands, list):
+        raise ValueError("data.extrapolation_bands must be a list.")  # noqa: TRY004 -- public validation errors use ValueError
+    names = set()
+    result = []
+    for index, band in enumerate(bands):
+        prefix = f"data.extrapolation_bands[{index}]"
+        if not isinstance(band, dict) or set(band) != {"name", "x_min", "x_max", "n"}:
+            raise ValueError(f"{prefix} must define exactly name, x_min, x_max, and n.")
+        name = band["name"]
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[a-z0-9_]+", name)
+            or name in names
+        ):
+            raise ValueError(f"{prefix}.name must be unique lowercase [a-z0-9_].")
+        names.add(name)
+        _validate_interval(band["x_min"], band["x_max"], prefix)
+        count = band["n"]
+        if isinstance(count, bool) or not isinstance(count, Integral) or count < 2:
+            raise ValueError(f"{prefix}.n must be an integer >= 2.")
+        result.append(dict(band))
+    return result
+
+
+def _grid_representations(x: np.ndarray, train: np.ndarray) -> tuple[np.ndarray, ...]:
+    """Compare the coordinates consumed by both raw and standardized models."""
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        raw = x.astype(np.float32)
+        scale = train.std()
+        standardized = ((x - train.mean()) / scale).astype(np.float32)
+    values = (x, raw, standardized)
+    if any(not np.isfinite(v).all() or np.unique(v).size != v.size for v in values):
+        raise ValueError(
+            "Domain precision is insufficient for the requested grid in float32."
+        )
+    return values
 
 
 class DataGenerator:
@@ -31,7 +110,7 @@ class DataGenerator:
 
     Args:
         sample_size: Total in-domain samples, split 70:10:20; at least 20.
-            Experiment YAML validation enforces counts and interval settings.
+            Validated for both direct Python calls and experiment YAML.
         x_min: Inclusive lower sampling boundary.
         x_max: Inclusive upper training boundary.
         target: The supported name rich_periodic (kept for saved-config compatibility).
@@ -40,7 +119,7 @@ class DataGenerator:
             lie outside ``[x_min, x_max]`` and never enter the fitting splits.
 
     Raises:
-        ValueError: The target is unsupported.
+        ValueError: Invalid target, counts, intervals, or band settings.
 
     Notes:
         Split counts are derived from sample_size. Extrapolation counts are separate.
@@ -54,54 +133,102 @@ class DataGenerator:
         x_max: float = 10.0 * np.pi,
         extrapolation_bands: list[dict] | None = None,
     ) -> None:
+        """Store validated sampling settings without generating observations.
+
+        Args:
+            target: Supported reference name, ``rich_periodic``. Retained for
+                compatibility with saved experiment configurations.
+            sample_size: Total in-domain observations, at least 20, split 70:10:20.
+            x_min: Finite lower training boundary, included in the training grid.
+            x_max: Finite upper training boundary, greater than ``x_min``.
+            extrapolation_bands: Optional list of mappings containing exactly
+                ``name``, ``x_min``, ``x_max``, and ``n``. Names must be unique
+                lowercase identifiers; each band requires at least two samples.
+
+        Raises:
+            ValueError: Target, sample count, boundaries, or band settings are invalid."""
         self.n_train, self.n_val, self.n_test = split_counts(sample_size)
         self.sample_size = int(sample_size)
 
-        self.x_min = x_min
-        self.x_max = x_max
+        _validate_interval(x_min, x_max, "data")
+        self.x_min = float(x_min)
+        self.x_max = float(x_max)
 
         self.target = target
-        self.extrapolation_bands = list(extrapolation_bands or [])
+        self.extrapolation_bands = _validate_bands(extrapolation_bands)
 
         if target != "rich_periodic":
-            raise ValueError(f"Unsupported target: {target}")
+            raise ValueError(
+                f"Unsupported target: {target}; data.target must be rich_periodic."
+            )
         self.target_fn = rich_periodic
 
     def generate(self) -> Dataset:
-        """Return deterministic, evenly spaced grids for all three splits.
+        """Generate deterministic, disjoint train/validation/test grids and labels.
 
-        Training includes both boundaries. Validation and test use distinct
-        irrational cell offsets to avoid shared points with each other and the
-        endpoint-aligned training grid. Changing sample_size changes all three grid sizes. Seeds affect model training, not input locations.
-        """
+        Returns:
+            Mapping from ``train``, ``val``, and ``test`` to float64 ``(x, y)``
+            vectors. Counts follow ``split_counts(sample_size)``. Training includes
+            both boundaries; held-out points lie inside the interval.
+
+        Raises:
+            ValueError: Available precision cannot support unique, disjoint grids.
+
+        Notes:
+            Held-out grids remain evenly spaced. Their sub-cell offsets adjust
+            deterministically if float32 rounding would merge points in raw or
+            standardized model coordinates. Seeds affect training, not these grids.
+            Historical saved runs may therefore use different held-out coordinates."""
         inputs = {"train": np.linspace(self.x_min, self.x_max, self.n_train)}
-        for name, count, offset in (
+        train = inputs["train"]
+        representations = {"train": _grid_representations(train, train)}
+        for name, count, initial_offset in (
             ("val", self.n_val, np.sqrt(2) / 4),
             ("test", self.n_test, np.sqrt(3) / 4),
         ):
-            positions = (np.arange(count, dtype=np.float64) + offset) / count
-            inputs[name] = self.x_min + (self.x_max - self.x_min) * positions
-        # Guard against floating-point collisions in extremely narrow domains.
-        names = list(inputs)
-        for index, name in enumerate(names):
-            if np.unique(inputs[name]).size != inputs[name].size:
+            # Preserve even spacing and sample counts. If rounding merges splits,
+            # move the entire held-out grid by a deterministic sub-cell offset.
+            for attempt in range(100):
+                offset = (initial_offset + attempt / 100) % 1
+                positions = (np.arange(count, dtype=np.float64) + offset) / count
+                x = self.x_min + (self.x_max - self.x_min) * positions
+                candidate = _grid_representations(x, train)
+                if all(
+                    not np.intersect1d(a, b).size
+                    for previous in representations.values()
+                    for a, b in zip(candidate, previous, strict=True)
+                ):
+                    inputs[name] = x
+                    representations[name] = candidate
+                    break
+            else:
                 raise ValueError(
-                    "Domain precision is insufficient for the requested grid."
+                    "Domain precision causes overlapping split grids in float32."
                 )
-            for other in names[:index]:
-                if np.intersect1d(inputs[name], inputs[other]).size:
-                    raise ValueError("Domain precision causes overlapping split grids.")
         return {name: (x, self.target_fn(x)) for name, x in inputs.items()}
 
     def generate_extrapolation(self) -> Dataset:
-        """Return fixed evaluation grids in (lower, upper] for each band.
+        """Generate evaluation-only observations in each configured (lower, upper] band.
 
-        Excluding the lower endpoint keeps the near band separate from the
-        training boundary. These grids never enter fitting or model selection.
-        """
+        Returns:
+            Mapping of ``extrap_<name>`` to float64 input/label vectors, each with
+            the configured sample count. Returns an empty mapping if no bands exist.
+
+        Raises:
+            ValueError: The input grid loses uniqueness or finiteness in float32.
+
+        Notes:
+            Excluding the lower endpoint separates the usual near band from the
+            training boundary. These observations must not enter fitting or selection."""
         bands = {}
         for band in self.extrapolation_bands:
             x = np.linspace(band["x_min"], band["x_max"], band["n"] + 1)[1:]
+            with np.errstate(over="ignore", invalid="ignore"):
+                rounded = x.astype(np.float32)
+            if not np.isfinite(rounded).all() or np.unique(rounded).size != x.size:
+                raise ValueError(
+                    "Domain precision is insufficient for the extrapolation grid in float32."
+                )
             bands[f"extrap_{band['name']}"] = (x, self.target_fn(x))
         return bands
 
@@ -110,105 +237,26 @@ class DataGenerator:
         dataset: Dataset | None = None,
         show_target: bool = True,
         figsize: tuple[float, float] | None = None,
-    ) -> tuple[Figure, NDArray]:
-        """Plot sampled splits and the target curve in original coordinates.
+    ) -> tuple[Figure, np.ndarray]:
+        """Render the generated data through the shared visualization module.
 
-        With no dataset, generate the in-domain splits. Configured extrapolation
-        bands appear in separate panels, avoiding a misleading continuous axis
-        across gaps. Supplied extrapolation samples take precedence over generated
-        ones. This is an exploratory ground-truth plot, not model evaluation.
+        Args:
+            dataset: Optional split mapping in original input/target coordinates.
+                If omitted, generate the in-domain splits; missing configured
+                evaluation bands are generated separately.
+            show_target: Whether to overlay dense reference-function curves.
+            figsize: Optional figure width and height in inches.
 
         Returns:
-            Figure and a one-dimensional array of axes. Call ``plt.show()`` to
-            display or ``fig.savefig(...)`` to save; close the figure afterward.
-        """
-        # Import when plotting to avoid a data/visualization import cycle.
-        from function_approximation.evaluation.visualization import (
-            GROUND_TRUTH,
-            SPLIT_COLORS,
-            style_figure,
-        )
+            Matplotlib figure and one-dimensional axes array, with one in-domain
+            panel followed by one panel per configured extrapolation band.
 
-        dataset = self.generate() if dataset is None else dataset
-        missing = {"train", "val", "test"} - dataset.keys()
-        if missing:
-            raise ValueError(f"Plot dataset is missing splits: {sorted(missing)}")
-        missing_bands = any(
-            f"extrap_{band['name']}" not in dataset for band in self.extrapolation_bands
-        )
-        extrapolation = self.generate_extrapolation() if missing_bands else {}
-        panels = 1 + len(self.extrapolation_bands)
-        fig, axes = plt.subplots(
-            panels,
-            1,
-            figsize=figsize or (13, 3.5 * panels),
-            squeeze=False,
-            layout="constrained",
-        )
-        axes = axes[:, 0]
-        styles = {
-            "train": ("Training", SPLIT_COLORS["train"], "o"),
-            "val": ("Validation", SPLIT_COLORS["val"], "^"),
-            "test": ("Interpolation test", SPLIT_COLORS["test"], "s"),
-        }
-        intervals = [(self.x_min, self.x_max)] + [
-            (band["x_min"], band["x_max"]) for band in self.extrapolation_bands
-        ]
-        for index, (ax, (lower, upper)) in enumerate(zip(axes, intervals)):
-            if show_target:
-                dense = np.linspace(lower, upper, 6000)
-                ax.plot(
-                    dense,
-                    self.target_fn(dense),
-                    color=GROUND_TRUTH,
-                    lw=3,
-                    alpha=0.8,
-                    label="Target function",
-                    zorder=1,
-                )
-            if index == 0:
-                for name, (label, color, marker) in styles.items():
-                    x, y = dataset[name]
-                    ax.scatter(
-                        x,
-                        y,
-                        s=10,
-                        color=color,
-                        marker=marker,
-                        alpha=0.5,
-                        linewidths=0,
-                        label=f"{label} (n={len(x):,})",
-                        zorder=2,
-                    )
-                ax.set_title(
-                    "In-domain data — training / validation / interpolation test (70:10:20)",
-                    loc="left",
-                )
-            else:
-                band = self.extrapolation_bands[index - 1]
-                name = f"extrap_{band['name']}"
-                x, y = dataset[name] if name in dataset else extrapolation[name]
-                ax.scatter(
-                    x,
-                    y,
-                    s=10,
-                    color=GROUND_TRUTH,
-                    alpha=0.5,
-                    linewidths=0,
-                    label=f"Evaluation only (n={len(x):,})",
-                    zorder=2,
-                )
-                ax.set_title(f"Extrapolation — {band['name']}", loc="left")
-            ticks = np.linspace(lower, upper, 5)
-            ax.set_xticks(
-                ticks, [f"{value / np.pi:g}π" if value else "0" for value in ticks]
-            )
-            ax.set(xlim=(lower, upper), xlabel="Input x", ylabel="Target value")
-            ax.grid(alpha=0.18)
-            ax.set_axisbelow(True)
-            ax.legend(loc="best", fontsize=9, ncol=2)
-        fig.suptitle(
-            self.target.replace("_", " ").title(), fontsize=17, fontweight="bold"
-        )
-        style_figure(fig)
-        return fig, axes
+        Raises:
+            ValueError: Required train/validation/test entries are missing.
+
+        Notes:
+            Compatibility wrapper for ``evaluation.visualization.plot_data``.
+            The caller is responsible for saving or closing the figure."""
+        from function_approximation.evaluation.visualization import plot_data
+
+        return plot_data(self, dataset, show_target, figsize)

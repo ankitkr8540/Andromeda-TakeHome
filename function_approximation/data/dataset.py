@@ -16,7 +16,18 @@ if TYPE_CHECKING:
 
 
 def rich_periodic(x: np.ndarray) -> np.ndarray:
-    """Multi-harmonic periodic benchmark."""
+    """Evaluate the bounded, multi-harmonic reference function.
+
+    Args:
+        x: NumPy input coordinates in original units; scalar or array-shaped.
+
+    Returns:
+        Target values with the same shape as ``x``. The six angular frequencies
+        are 1, 2, 3, 5, 7, and 11, giving a fundamental period of 2π.
+
+    Notes:
+        Used to generate labels and reference curves only. Trained models and
+        saved-model inference must not call this function."""
     return (
         np.sin(x)
         + 0.55 * np.cos(2 * x)
@@ -33,6 +44,19 @@ class FunctionDataset(TorchDataset):
     def __init__(
         self, x: ArrayLike | torch.Tensor, y: ArrayLike | torch.Tensor
     ) -> None:
+        """Validate and store matching input/target columns for PyTorch.
+
+        Args:
+            x: Nonempty finite vector or column of scalar inputs.
+            y: Matching nonempty finite vector or column of target values.
+
+        Raises:
+            ValueError: Inputs have multiple features, mismatched sample counts,
+                or values that are empty or nonfinite after float32 conversion.
+
+        Notes:
+            Arrays become float32 tensors of shape ``(N, 1)``. No splitting or
+            scaling occurs here. Compatible arrays/tensors may share storage."""
         self.x = self._column(x)
         self.y = self._column(y)
         if self.x.shape != self.y.shape:
@@ -40,6 +64,7 @@ class FunctionDataset(TorchDataset):
 
     @staticmethod
     def _column(values: ArrayLike | torch.Tensor) -> torch.Tensor:
+        """Convert a finite scalar vector/column to a float32 tensor of shape (N, 1)."""
         tensor = torch.as_tensor(values, dtype=torch.float32)
         if tensor.ndim not in (1, 2) or (tensor.ndim == 2 and tensor.shape[1] != 1):
             raise ValueError("Expected scalar samples with shape (N,) or (N, 1).")
@@ -48,9 +73,11 @@ class FunctionDataset(TorchDataset):
         return tensor.reshape(-1, 1)
 
     def __len__(self) -> int:
+        """Return the number of input-target pairs available to a DataLoader."""
         return len(self.x)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the input and target tensors for an index; each has shape (1,)."""
         return self.x[index], self.y[index]
 
 
@@ -59,12 +86,25 @@ def create_dataloaders(
     batch_size: int = 64,
     seed: int = 42,
 ) -> dict[str, DataLoader]:
-    """Load train/val/test splits, shuffling training only with a local seed.
+    """Create reproducible training, validation, and interpolation-test loaders.
 
-    Extra splits, including extrapolation bands, are deliberately excluded.
-    Evaluation order and partial final batches are preserved. Missing required
-    splits raise KeyError; invalid samples or batch size raise ValueError.
-    """
+    Args:
+        dataset: Mapping with ``train``, ``val``, and ``test`` entries, each
+            containing matching ``(x, y)`` arrays or tensors.
+        batch_size: Positive integer number of observations per batch.
+        seed: Seed for the training loader's local shuffle generator.
+
+    Returns:
+        Mapping of the three split names to PyTorch DataLoaders. Only training
+        is shuffled; evaluation order and partial final batches are preserved.
+
+    Raises:
+        KeyError: A required split is missing.
+        ValueError: Batch size or dataset shapes/values are invalid.
+
+    Notes:
+        Extra entries, including extrapolation bands, are excluded. Creating
+        loaders does not fit preprocessing or modify the global random seed."""
     if (
         isinstance(batch_size, bool)
         or not isinstance(batch_size, Integral)
