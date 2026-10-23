@@ -8,26 +8,12 @@ from torch import nn
 
 
 class FourierRegressor(nn.Module):
-    """Learn c + sum(a_k sin(w_k x) + b_k cos(w_k x)).
+    """Learn bias + sum(a_k sin(w_k x) + b_k cos(w_k x)).
 
-    Frequencies are independent trainable parameters. The configurable
-    range controls initialization and spectral search; training can move outside it.
-    Frequencies use radians per model-input unit, so input scaling changes
-    their interpretation. No target frequencies or harmonic ratios are given.
-
-    Args:
-        num_frequencies: Number of independent components; eight use 25 parameters.
-        frequency_min: Positive lower bound for initialization and spectral search.
-        frequency_max: Upper bound, strictly greater than ``frequency_min``.
-
-    Raises:
-        ValueError: A component count or frequency bound is invalid.
-
-    Notes:
-        Construction initializes parameters randomly. Call
-        :meth:`initialize_from_data` explicitly for spectral initialization.
-        Forward prediction never estimates frequencies or consumes labels.
-        Frequencies may move outside the initialization interval during training.
+    Frequencies, amplitudes, and bias are trainable. Frequency bounds control
+    random initialization and spectral search, not subsequent optimization.
+    Frequencies use radians per model-input unit; no target frequencies are given.
+    Random initialization can be uniform or log-uniform within those bounds.
     """
 
     model_type = "fourier"
@@ -37,7 +23,22 @@ class FourierRegressor(nn.Module):
         num_frequencies: int = 8,
         frequency_min: float = 0.1,
         frequency_max: float = 5.0,
+        frequency_initialization: str = "uniform",
     ) -> None:
+        """Allocate trainable frequencies, sine/cosine coefficients, and a bias.
+
+        Args:
+            num_frequencies: Positive component count K; total parameters are 3K+1.
+            frequency_min: Finite positive lower initialization/search frequency.
+            frequency_max: Finite upper frequency, greater than ``frequency_min``.
+            frequency_initialization: ``uniform`` or ``log_uniform`` random draws.
+
+        Raises:
+            ValueError: Count, bounds, or initialization distribution is invalid.
+
+        Notes:
+            Frequencies use radians per model-input unit. Bounds apply to random
+            initialization and spectral search, not subsequent optimizer updates."""
         super().__init__()
         if (
             isinstance(num_frequencies, bool)
@@ -57,9 +58,18 @@ class FourierRegressor(nn.Module):
         ):
             raise ValueError("Require finite 0 < frequency_min < frequency_max.")
 
+        if frequency_initialization not in ("uniform", "log_uniform"):
+            raise ValueError("frequency_initialization must be uniform or log_uniform.")
         self.frequencies = nn.Parameter(
             torch.empty(num_frequencies).uniform_(frequency_min, frequency_max)
         )
+        if frequency_initialization == "log_uniform":
+            with torch.no_grad():
+                # Transform the same random draws, preserving coefficient RNG state.
+                self.frequencies.sub_(frequency_min).div_(frequency_max - frequency_min)
+                self.frequencies.mul_(math.log(frequency_max / frequency_min)).add_(
+                    math.log(frequency_min)
+                ).exp_()
         self.sine_weights = nn.Parameter(0.1 * torch.randn(num_frequencies))
         self.cosine_weights = nn.Parameter(0.1 * torch.randn(num_frequencies))
         self.bias = nn.Parameter(torch.zeros(1))
@@ -69,40 +79,16 @@ class FourierRegressor(nn.Module):
     def initialize_from_data(
         self, x: np.ndarray, y: np.ndarray, *, grid_size: int = 4096
     ) -> dict:
-        """Fit starting frequencies and coefficients using training data only.
+        """Initialize frequencies and coefficients using training samples only.
 
-        Inputs must use the same coordinates as forward(). Find Lomb–Scargle
-        peaks in successive residuals, refitting linear coefficients after
-        each component. Call before training; all parameters stay trainable.
+        Search Lomb–Scargle peaks in successive residuals, refine each frequency,
+        and refit coefficients by least squares. Inputs must use model coordinates
+        and have shape (N,) or (N, 1), with N >= 2*K+1. grid_size must be at least
+        max(32, 2*K+1). Constant targets use bias only.
 
-        Args:
-            x: Training inputs, shape ``(N,)`` or ``(N, 1)``. Apply the fitted
-                input preprocessor first if the model uses standardized inputs.
-            y: Corresponding training targets, in either scalar sample shape.
-            grid_size: Number of angular-frequency candidates in the configured
-                interval. Must be an integer at least ``max(32, 2*K + 1)``,
-                where ``K`` is the model's component count.
-
-        Returns:
-            A JSON-compatible report containing sample count, search settings,
-            active component count, least-squares rank, training MSE, and the
-            initial spectrum. Least-squares MSE is computed in float64 before
-            copying coefficients to the model's dtype.
-
-        Raises:
-            ValueError: Inputs are nonfinite, shapes differ, the input span is
-                zero, fewer than ``2*K + 1`` samples are provided, or the grid
-                size is invalid.
-            FloatingPointError: Spectral power or fitted coefficients are nonfinite.
-            RuntimeError: The frequency grid has no remaining eligible candidates.
-
-        Notes:
-            This is part of fitting the model and must receive training data
-            only. It updates existing parameters in place without replacing
-            them or consuming PyTorch random numbers. Constant targets use
-            only the bias; unused components retain random frequencies and
-            receive zero initial amplitude. Finite search resolution, noise,
-            and the search interval limit which frequencies can be found.
+        Parameters are updated in place, remain trainable, and consume no PyTorch
+        random numbers. Return a JSON-compatible initialization report. Finite
+        search resolution, bounds, and noise limit frequency recovery.
         """
         from scipy.optimize import minimize_scalar
         from scipy.signal import lombscargle
@@ -138,18 +124,20 @@ class FourierRegressor(nn.Module):
             (self.frequency_max - self.frequency_min) / (2 * count),
         )
         frequencies = []
-        residual = y - y.mean()
-        coefficients = np.array([y.mean()])
+        target_mean = y.mean()
+        residual = y - target_mean
+        coefficients = np.array([target_mean])
         rank = 1
         available = np.ones(grid_size, dtype=bool)
         initial_energy = float(residual @ residual)
 
         def design(values):
+            """Build bias, sine, and cosine columns at candidate frequencies on training inputs."""
             angles = x[:, None] * np.asarray(values)
             return np.column_stack((np.ones(len(x)), np.sin(angles), np.cos(angles)))
 
         for _ in range(count):
-            if np.ptp(y) == 0 or float(residual @ residual) <= 1e-12 * max(
+            if float(residual @ residual) <= 1e-12 * max(
                 initial_energy, np.finfo(float).tiny
             ):
                 break
@@ -163,6 +151,7 @@ class FourierRegressor(nn.Module):
             index = int(np.argmax(np.where(available, power, -np.inf)))
 
             def residual_error(frequency, residual=residual):
+                """Return least-squares residual energy for one candidate angular frequency."""
                 matrix = design([frequency])
                 weights = np.linalg.lstsq(matrix, residual, rcond=None)[0]
                 error = residual - matrix @ weights
@@ -210,17 +199,9 @@ class FourierRegressor(nn.Module):
         }
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Evaluate learned sine/cosine components without fitting anything.
+        """Evaluate learned components on finite (N, 1) inputs; return (N, 1).
 
-        Args:
-            x: Finite tensor of shape ``(N, 1)`` in model-input coordinates.
-
-        Returns:
-            Tensor of shape ``(N, 1)`` on the model's device. Gradients flow
-            through inputs, frequencies, sine/cosine weights, and bias.
-
-        Raises:
-            ValueError: Inputs are empty, nonfinite, or have the wrong shape.
+        Prediction never estimates frequencies or consumes labels.
         """
         if x.ndim != 2 or x.shape[1] != 1 or len(x) == 0:
             raise ValueError(
@@ -235,14 +216,10 @@ class FourierRegressor(nn.Module):
         ).sum(dim=1, keepdim=True) + self.bias
 
     def spectrum(self) -> dict:
-        """Return a detached, JSON-compatible description of learned components.
+        """Return bias and detached components sorted by signed frequency.
 
-        Returns:
-            A bias and a list of components sorted by signed angular frequency.
-            Each component contains ``frequency``, ``sine_weight``,
-            ``cosine_weight``, and ``amplitude = hypot(sine_weight, cosine_weight)``.
-            Frequencies are radians per model-input unit, not necessarily per
-            original x unit. Sorting does not modify model parameters.
+        Each component reports frequency, sine/cosine weights, and amplitude.
+        Frequencies are in model-input units; sorting does not change parameters.
         """
         components = (
             torch.stack(

@@ -7,7 +7,7 @@ import pytest
 import torch
 import yaml
 
-from function_approximation.models.fourier import FourierRegressor
+from function_approximation.models.fourier_regressor import FourierRegressor
 from function_approximation.training.config import load_experiment_config
 from scripts.run_experiments import run_experiment
 
@@ -17,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_random_initialization_remains_available_without_fitting_data(
     tmp_path, monkeypatch
 ):
-    config = load_experiment_config(ROOT / "configs/fourier.yaml")
+    config = load_experiment_config(
+        ROOT / "configs/experiments/fourier_rich_periodic.yaml"
+    )
     config["experiment"]["output_dir"] = str(tmp_path / "outputs")
     config["training"].update(max_epochs=1, patience=1)
     del config["training"]["fourier_initialization"]
@@ -113,21 +115,25 @@ def test_bad_initialization_inputs_do_not_change_weights(x, y, grid_size):
 
 
 @pytest.mark.parametrize(
-    "model_type,mode,n_train",
+    "model_type,mode,sample_size",
     [
-        ("fourier", "unknown", 24),
-        ("fourier", True, 24),
-        ("mlp", "spectral", 24),
-        ("fourier", "spectral", 8),
+        ("fourier", "unknown", 40),
+        ("fourier", True, 40),
+        ("mlp", "spectral", 40),
+        ("fourier", "spectral", 20),
     ],
 )
 def test_invalid_initialization_config_creates_no_outputs(
-    tmp_path, model_type, mode, n_train
+    tmp_path, model_type, mode, sample_size
 ):
-    source = "fourier.yaml" if model_type == "fourier" else "mlp_random.yaml"
+    source = (
+        "experiments/fourier_rich_periodic.yaml"
+        if model_type == "fourier"
+        else "experiments/mlp_rich_periodic.yaml"
+    )
     config = load_experiment_config(ROOT / "configs" / source)
     config["training"]["fourier_initialization"] = mode
-    config["data"]["n_train"] = n_train
+    config["data"]["sample_size"] = sample_size
     config["experiment"]["output_dir"] = str(tmp_path / "outputs")
     path = tmp_path / "invalid.yaml"
     path.write_text(yaml.safe_dump(config))

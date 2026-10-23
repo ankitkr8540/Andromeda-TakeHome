@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from function_approximation.data.dataset import create_dataloaders
-from function_approximation.models.mlp import MLPRegressor
+from function_approximation.models.mlp_regressor import MLPRegressor
 from function_approximation.training.trainer import Trainer
 
 
@@ -16,9 +16,7 @@ def make_trainer_and_loaders(targets):
     x = np.array([-1.0, 1.0], dtype=np.float32)
     dataset = {split: (x, targets) for split in ("train", "val", "test")}
     return (
-        Trainer(
-            MLPRegressor(hidden_dim=4, num_hidden_layers=1), max_epochs=2, patience=2
-        ),
+        Trainer(MLPRegressor(hidden_dims=[4]), max_epochs=2, patience=2),
         create_dataloaders(dataset, batch_size=2),
     )
 
@@ -33,10 +31,10 @@ def test_overflow_aborts_before_optimizer_step_and_save(tmp_path):
         trainer.fit(loaders["train"], loaders["val"])
     trainer.optimizer.step.assert_not_called()
     assert trainer.history == {"train_loss": [], "val_loss": []}
-    assert trainer.final_model_state is None
+    assert trainer.best_epoch == 0
     for key, value in trainer.model.state_dict().items():
         assert torch.equal(value, initial[key])
-    for save in (trainer.save_checkpoint, trainer.save_final_checkpoint):
+    for save in (trainer.save_checkpoint,):
         with pytest.raises(RuntimeError):
             save(tmp_path / "invalid.pt", {})
     assert not (tmp_path / "invalid.pt").exists()
@@ -55,7 +53,7 @@ def test_epoch_guard_catches_nonfinite_custom_losses(monkeypatch, train_loss, va
     with pytest.raises(FloatingPointError, match="Nonfinite loss at epoch 1"):
         trainer.fit(loaders["train"], loaders["val"])
     assert trainer.best_epoch == 0
-    assert trainer.final_model_state is None
+    assert trainer.best_epoch == 0
 
 
 def test_output_shape_must_match_scalar_targets():
@@ -77,4 +75,15 @@ def test_output_shape_must_match_scalar_targets():
 )
 def test_direct_trainer_settings_are_validated(kwargs):
     with pytest.raises(ValueError):
-        Trainer(MLPRegressor(hidden_dim=4), **kwargs)
+        Trainer(MLPRegressor(hidden_dims=[4]), **kwargs)
+
+
+def test_failed_fit_after_valid_epoch_cannot_save(tmp_path, monkeypatch):
+    trainer, loaders = make_trainer_and_loaders(np.array([0.0, 1.0], dtype=np.float32))
+    losses = iter([1.0, 1.0, float("nan"), 1.0])
+    monkeypatch.setattr(trainer, "_run_epoch", lambda *args, **kwargs: next(losses))
+    with pytest.raises(FloatingPointError):
+        trainer.fit(loaders["train"], loaders["val"])
+    with pytest.raises(RuntimeError, match="Train the model"):
+        trainer.save_checkpoint(tmp_path / "invalid.pt", {})
+    assert not (tmp_path / "invalid.pt").exists()

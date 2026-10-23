@@ -16,7 +16,7 @@ from function_approximation.evaluation.visualization import (
     plot_residuals,
 )
 from function_approximation.inference import predict_values
-from function_approximation.models.fourier import FourierRegressor
+from function_approximation.models.fourier_regressor import FourierRegressor
 
 
 @pytest.mark.parametrize(

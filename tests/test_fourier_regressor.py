@@ -14,7 +14,7 @@ from function_approximation.data.dataset import create_dataloaders
 from function_approximation.data.generation import DataGenerator
 from function_approximation.inference import load_predictor
 from function_approximation.models import build_model
-from function_approximation.models.fourier import FourierRegressor
+from function_approximation.models.fourier_regressor import FourierRegressor
 from function_approximation.training.config import load_experiment_config
 from function_approximation.training.trainer import Trainer
 from scripts.run_experiments import run_experiment
@@ -119,7 +119,7 @@ def test_existing_trainer_learns_frequency_and_preserves_checkpoint_type(tmp_pat
         parameter.grad is not None and torch.isfinite(parameter.grad).all()
         for parameter in model.parameters()
     )
-    for save in (trainer.save_checkpoint, trainer.save_final_checkpoint):
+    for save in (trainer.save_checkpoint,):
         save(tmp_path / "model.pt", architecture)
         checkpoint = torch.load(tmp_path / "model.pt", weights_only=True)
         assert checkpoint["model_type"] == "fourier"
@@ -127,7 +127,12 @@ def test_existing_trainer_learns_frequency_and_preserves_checkpoint_type(tmp_pat
         reloaded.load_state_dict(checkpoint["model_state_dict"])
 
 
-@pytest.mark.parametrize("name", ["fourier.yaml", "fourier_random.yaml"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "experiments/fourier_rich_periodic.yaml",
+    ],
+)
 @pytest.mark.parametrize("scaling", ["none", "standard"])
 def test_full_pipeline_saved_inference_and_spectrum(
     tmp_path, monkeypatch, name, scaling
@@ -135,11 +140,11 @@ def test_full_pipeline_saved_inference_and_spectrum(
     monkeypatch.chdir(tmp_path)
     config = load_experiment_config(ROOT / "configs" / name)
     config["experiment"]["output_dir"] = str(tmp_path / "outputs")
-    config["data"].update(n_train=24, n_val=8, n_test=8)
+    config["data"].update(sample_size=40)
     config["preprocessing"]["scaling"] = scaling
     config["training"].update(max_epochs=3, patience=3, batch_size=8)
     config["tracking"].update(
-        enabled=name == "fourier.yaml",
+        enabled=name == "experiments/fourier_rich_periodic.yaml",
         tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}",
     )
     initialization_calls = []
@@ -154,17 +159,19 @@ def test_full_pipeline_saved_inference_and_spectrum(
     path.write_text(yaml.safe_dump(config))
     output = run_experiment(path)
     spectrum = json.loads((output / "spectrum.json").read_text())
-    comparison = json.loads((output / "checkpoint_comparison.json").read_text())
     predictions = np.load(output / "predictions.npz")
     initialization = json.loads((output / "initialization.json").read_text())
     assert initialization["method"] == "spectral"
-    assert initialization["training_samples"] == 24
+    assert initialization["training_samples"] == 28
     assert len(initialization_calls) == 1
     forbidden = Mock(
         side_effect=AssertionError("Inference must not use labels or target function")
     )
     monkeypatch.setattr(DataGenerator, "generate", forbidden)
-    monkeypatch.setattr(DataGenerator, "_target_function", forbidden)
+    monkeypatch.setattr("function_approximation.data.dataset.rich_periodic", forbidden)
+    monkeypatch.setattr(
+        "function_approximation.data.generation.rich_periodic", forbidden
+    )
     monkeypatch.setattr(FourierRegressor, "initialize_from_data", forbidden)
     predictor = load_predictor(output)
     np.testing.assert_array_equal(
@@ -180,7 +187,7 @@ def test_full_pipeline_saved_inference_and_spectrum(
     )
     forbidden.assert_not_called()
     assert not predictor.model.training
-    for checkpoint_name in ("best", "final"):
+    for checkpoint_name in ("best",):
         checkpoint = torch.load(
             output / f"{checkpoint_name}_model.pt", weights_only=True
         )
@@ -188,7 +195,7 @@ def test_full_pipeline_saved_inference_and_spectrum(
         model = build_model(checkpoint["model_type"], checkpoint["model_config"])
         model.load_state_dict(checkpoint["model_state_dict"])
         assert spectrum[checkpoint_name] == {
-            "epoch": comparison[checkpoint_name]["epoch"],
+            "epoch": checkpoint["epoch"],
             **model.spectrum(),
         }
         for component in spectrum[checkpoint_name]["components"]:
@@ -223,7 +230,9 @@ def test_full_pipeline_saved_inference_and_spectrum(
     ],
 )
 def test_invalid_fourier_config_rejected_before_output(tmp_path, settings):
-    config = load_experiment_config(ROOT / "configs/fourier.yaml")
+    config = load_experiment_config(
+        ROOT / "configs/experiments/fourier_rich_periodic.yaml"
+    )
     config["model"].update(settings)
     config["experiment"]["output_dir"] = str(tmp_path / "outputs")
     path = tmp_path / "invalid.yaml"
