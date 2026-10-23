@@ -29,7 +29,7 @@ from function_approximation.evaluation.visualization import (
 from function_approximation.inference import predict_values
 from function_approximation.models import build_model
 from function_approximation.training.config import load_experiment_config
-from function_approximation.training.experiment import (
+from function_approximation.training.tracking import (
     configure_mlflow,
     log_output_artifacts,
 )

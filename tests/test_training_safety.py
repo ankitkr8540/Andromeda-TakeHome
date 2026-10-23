@@ -53,7 +53,6 @@ def test_epoch_guard_catches_nonfinite_custom_losses(monkeypatch, train_loss, va
     with pytest.raises(FloatingPointError, match="Nonfinite loss at epoch 1"):
         trainer.fit(loaders["train"], loaders["val"])
     assert trainer.best_epoch == 0
-    assert trainer.best_epoch == 0
 
 
 def test_output_shape_must_match_scalar_targets():

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from function_approximation.training.experiment import (
+from function_approximation.training.tracking import (
     DEFAULT_TRACKING_URI,
     configure_mlflow,
     log_output_artifacts,
@@ -16,9 +16,18 @@ from function_approximation.training.experiment import (
     "disabled, excluded",
     [
         (None, set()),
-        ("log_model", {"best_model.pt", "final_model.pt"}),
+        ("log_model", {"best_model.pt"}),
         ("log_preprocessor", {"preprocessor.joblib"}),
-        ("log_figures", {"predictions.png", "checkpoint_comparison.png"}),
+        (
+            "log_figures",
+            {
+                "predictions.png",
+                "extrapolation.png",
+                "distance.svg",
+                "distance.pdf",
+                "preview.PNG",
+            },
+        ),
     ],
 )
 def test_logging_switches_filter_only_uploads(
@@ -26,16 +35,20 @@ def test_logging_switches_filter_only_uploads(
 ):
     names = {
         "best_model.pt",
-        "final_model.pt",
         "preprocessor.joblib",
         "predictions.png",
-        "checkpoint_comparison.png",
+        "extrapolation.png",
+        "distance.svg",
+        "distance.pdf",
+        "preview.PNG",
         "metrics.json",
         "config.yaml",
         "baseline_metrics.json",
     }
     for name in names:
         (tmp_path / name).write_text("test")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "ignored.txt").write_text("nested artifact")
     upload = Mock()
     monkeypatch.setattr("mlflow.log_artifact", upload)
     log_output_artifacts(tmp_path, {disabled: False} if disabled else {})
@@ -46,7 +59,7 @@ def test_logging_switches_filter_only_uploads(
         call.kwargs["artifact_path"] == "experiment_outputs"
         for call in upload.call_args_list
     )
-    assert {path.name for path in tmp_path.iterdir()} == names
+    assert {path.name for path in tmp_path.iterdir() if path.is_file()} == names
 
 
 def test_shared_uri_precedence(monkeypatch):
