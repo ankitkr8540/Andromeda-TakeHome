@@ -689,3 +689,125 @@ def plot_checkpoint_comparison(
     fig.tight_layout()
     _save_figure(fig, save_path)
     return fig
+
+
+def plot_error_vs_distance(
+    rows: list[dict],
+    labels: dict[str, str] | None = None,
+    baseline_rmse: float | None = None,
+    coordinate: str = "input",
+    title: str = "Error versus distance",
+    save_path: str | Path | None = None,
+) -> Figure:
+    """Plot precomputed band RMSE against input position or extrapolation distance.
+
+    Args:
+        rows: Records containing ``variant``, positive finite ``rmse``, and
+            ``center_x_pi`` for input coordinates, or
+            ``distance_from_train_boundary_pi`` for boundary-relative distance.
+            Coordinate values are already in multiples of π, not radians.
+        labels: Optional mapping from variant identifiers to legend labels.
+            Variants retain their first-seen order; their points sort by position.
+        baseline_rmse: Optional positive constant reference error, evaluated by
+            the caller; displayed as a dotted training-mean baseline.
+        coordinate: ``input`` for band centres measured from the origin, or
+            ``boundary`` for distances from the upper training boundary.
+        title: Figure heading, preserved verbatim.
+        save_path: Optional PNG, SVG, or other Matplotlib-supported destination.
+            Missing parent directories are created.
+
+    Returns:
+        Matplotlib figure with both axes logarithmic, π input labels, shared
+        grey/burgundy styling, and an optional baseline. The caller closes it.
+
+    Raises:
+        ValueError: Records are empty, required fields are missing, or numeric
+            values are nonpositive/nonfinite. Log scales cannot display zero.
+
+    Notes:
+        This function only renders metrics. It does not load checkpoints,
+        generate labels, fit models, or select configurations. A point is the
+        RMSE over an evaluation band, not the pointwise error at its centre.
+        Use separate figures for negative-input evaluation bands.
+    """
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+
+    if coordinate not in ("input", "boundary"):
+        raise ValueError("coordinate must be 'input' or 'boundary'.")
+    if not rows:
+        raise ValueError("At least one error-versus-distance record is required.")
+    field = (
+        "center_x_pi" if coordinate == "input" else "distance_from_train_boundary_pi"
+    )
+    series = {}
+    for row in rows:
+        if not isinstance(row, dict) or not {"variant", "rmse", field} <= row.keys():
+            raise ValueError(f"Each record must contain variant, rmse, and {field}.")
+        name = row["variant"]
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Each variant must be a nonempty string.")
+        try:
+            if isinstance(row[field], bool) or isinstance(row["rmse"], bool):
+                raise TypeError("Boolean coordinates and errors are invalid.")
+            position, error = float(row[field]), float(row["rmse"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Band coordinates and RMSE must be positive finite numbers."
+            ) from exc
+        if not np.isfinite([position, error]).all() or position <= 0 or error <= 0:
+            raise ValueError(
+                "Band coordinates and RMSE must be positive finite numbers."
+            )
+        series.setdefault(name, []).append((position, error))
+    if baseline_rmse is not None and (
+        isinstance(baseline_rmse, bool)
+        or not isinstance(baseline_rmse, (int, float))
+        or not np.isfinite(baseline_rmse)
+        or baseline_rmse <= 0
+    ):
+        raise ValueError("baseline_rmse must be positive and finite.")
+
+    fig, ax = plt.subplots(figsize=(11, 5.5), layout="constrained")
+    colors = (GROUND_TRUTH, BURGUNDY, PREDICTION)
+    line_styles = (":", "-", "--", "-.")
+    for index, (variant, points) in enumerate(series.items()):
+        values = np.asarray(sorted(points))
+        ax.plot(
+            values[:, 0],
+            values[:, 1],
+            color=colors[index % len(colors)],
+            linestyle=line_styles[index % len(line_styles)],
+            linewidth=2,
+            label=(labels or {}).get(variant, variant),
+        )
+    if baseline_rmse is not None:
+        ax.axhline(
+            baseline_rmse,
+            color=INK,
+            linestyle=":",
+            linewidth=1.5,
+            label=f"Training-mean baseline ({format_rmse(baseline_rmse)})",
+        )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    positions = [position for points in series.values() for position, _ in points]
+    lower = 10 ** np.floor(np.log10(min(positions)))
+    upper = 10 ** np.ceil(np.log10(max(positions)))
+    ax.set_xlim(lower, upper if upper > lower else lower * 10)
+    ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda value, _: pi_label(value * np.pi))
+    )
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    description = (
+        "Input x · band centre"
+        if coordinate == "input"
+        else "Distance from training boundary · band centre"
+    )
+    ax.set_xlabel(f"{description} (log scale)")
+    ax.set_ylabel("Band RMSE (log scale)")
+    ax.set_title(title, loc="left")
+    ax.legend(frameon=False, fontsize=10)
+    style_figure(fig)
+    _save_figure(fig, save_path)
+    return fig

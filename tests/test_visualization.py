@@ -250,3 +250,77 @@ def test_legacy_checkpoint_comparison_keeps_import_and_ppt_style():
         assert "π" in ax.get_xticklabels()[0].get_text()
     finally:
         plt.close(fig)
+
+
+def test_distance_plot_sorts_records_and_preserves_ppt_style(tmp_path):
+    from function_approximation.evaluation.visualization import plot_error_vs_distance
+
+    rows = [
+        {"variant": "spectral", "center_x_pi": 55, "rmse": 0.15},
+        {"variant": "spectral", "center_x_pi": 15, "rmse": 0.05},
+        {"variant": "adam", "center_x_pi": 15, "rmse": 3e-6},
+        {"variant": "adam", "center_x_pi": 55, "rmse": 1e-5},
+    ]
+    before = [dict(row) for row in rows]
+    path = tmp_path / "plots/distance.svg"
+    fig = plot_error_vs_distance(
+        rows,
+        labels={"spectral": "Spectral only", "adam": "Spectral + Adam"},
+        baseline_rmse=0.8619,
+        title="Error versus distance",
+        save_path=path,
+    )
+    try:
+        ax = fig.axes[0]
+        assert ax.get_xscale() == ax.get_yscale() == "log"
+        np.testing.assert_array_equal(ax.lines[0].get_xdata(), [15, 55])
+        np.testing.assert_array_equal(ax.lines[0].get_ydata(), [0.05, 0.15])
+        assert ax.lines[0].get_color() == "#969FA5"
+        assert ax.lines[1].get_color() == "#4B1535"
+        assert ax.lines[-1].get_label() == "Training-mean baseline (0.8619)"
+        assert "π" in ax.xaxis.get_major_formatter()(20, 0)
+        assert "Input x" in ax.get_xlabel()
+        assert not ax.spines["top"].get_visible()
+        assert not ax.spines["right"].get_visible()
+        assert path.is_file()
+        assert rows == before
+    finally:
+        plt.close(fig)
+
+
+def test_distance_plot_can_show_distance_from_training_boundary():
+    from function_approximation.evaluation.visualization import plot_error_vs_distance
+
+    fig = plot_error_vs_distance(
+        [{"variant": "model", "distance_from_train_boundary_pi": 5, "rmse": 0.1}],
+        coordinate="boundary",
+    )
+    try:
+        assert fig.axes[0].lines[0].get_xdata().tolist() == [5]
+        assert "Distance from training boundary" in fig.axes[0].get_xlabel()
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    "rows,kwargs",
+    [
+        ([], {}),
+        ([{"variant": "model", "center_x_pi": 15}], {}),
+        ([{"variant": "model", "center_x_pi": 15, "rmse": 0}], {}),
+        ([{"variant": "model", "center_x_pi": -15, "rmse": 0.1}], {}),
+        ([{"variant": "model", "center_x_pi": 15, "rmse": np.nan}], {}),
+        ([{"variant": "model", "center_x_pi": 15, "rmse": 0.1}], {"baseline_rmse": 0}),
+        (
+            [{"variant": "model", "center_x_pi": 15, "rmse": 0.1}],
+            {"coordinate": "unknown"},
+        ),
+    ],
+)
+def test_distance_plot_invalid_data_creates_no_figure(rows, kwargs):
+    from function_approximation.evaluation.visualization import plot_error_vs_distance
+
+    before = plt.get_fignums()
+    with pytest.raises(ValueError):
+        plot_error_vs_distance(rows, **kwargs)
+    assert plt.get_fignums() == before
