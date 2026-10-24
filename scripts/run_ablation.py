@@ -63,10 +63,17 @@ def prepare_jobs(
                 max_epochs if max_epochs is not None else study["max_epochs"]
             )
             run_id = f"{target}_{variant}_seed{study['seed']}"
+            run_output = (output_dir / "runs" / run_id).resolve()
+            try:
+                # Keep generated configs portable when outputs live in the repo.
+                configured_output = run_output.relative_to(PROJECT_ROOT).as_posix()
+            except ValueError:
+                # Explicit destinations outside the project remain supported.
+                configured_output = str(run_output)
             config["experiment"].update(
                 seed=study["seed"],
                 run_name=run_id,
-                output_dir=str(output_dir / "runs" / run_id),
+                output_dir=configured_output,
             )
             config_path = config_dir / f"{run_id}.yaml"
             fingerprint = hashlib.sha256(

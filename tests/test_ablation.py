@@ -143,3 +143,32 @@ def test_common_cli_prepares_each_model_study_without_training(
     run_ablation.main()
     assert len(list((tmp_path / "configs").glob("*.yaml"))) == expected
     assert not (tmp_path / "results").exists()
+
+
+def test_generated_configs_are_portable_across_checkouts(tmp_path, monkeypatch):
+    """Moving a checkout must not embed the original machine's output root."""
+    import scripts.run_ablation as runner
+
+    template = load_experiment_config(
+        PROJECT_ROOT / "configs/experiments/fourier_rich_periodic.yaml"
+    )
+    study = PROJECT_ROOT / "configs/ablations/fourier/initialization_and_capacity.yaml"
+    relative_outputs = []
+    for name in ("first_checkout", "second_checkout"):
+        checkout = tmp_path / name
+        experiment = checkout / "configs/experiments/fourier_rich_periodic.yaml"
+        experiment.parent.mkdir(parents=True)
+        experiment.write_text(yaml.safe_dump(template))
+        monkeypatch.setattr(runner, "PROJECT_ROOT", checkout)
+        _, jobs = runner.prepare_jobs(study, checkout / "outputs/study")
+        outputs = [
+            load_experiment_config(job["config_path"])["experiment"]["output_dir"]
+            for job in jobs
+        ]
+        assert all(not Path(output).is_absolute() for output in outputs)
+        assert all(
+            (checkout / output).is_relative_to(checkout / "outputs")
+            for output in outputs
+        )
+        relative_outputs.append(outputs)
+    assert relative_outputs[0] == relative_outputs[1]
