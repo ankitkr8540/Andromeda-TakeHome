@@ -1,0 +1,27 @@
+# Exploratory optimization pilot; all candidates start randomly, without spectral fitting.
+model_type: fourier
+seed: 42
+max_epochs: 1500
+reference: uniform_k8_lr001
+targets: [rich_periodic]
+model:
+  num_frequencies: 8
+variants:
+  uniform_k8_lr001:
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400}
+  uniform_k8_lr003:
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400, learning_rate: 0.003}
+  uniform_k8_lr01:
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400, learning_rate: 0.01}
+  uniform_k32_lr001:
+    model: {num_frequencies: 32}
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400}
+  uniform_k64_lr001:
+    model: {num_frequencies: 64}
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400}
+  log_uniform_k8_lr001:
+    model: {frequency_initialization: log_uniform}
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400}
+  log_uniform_k32_lr001:
+    model: {frequency_initialization: log_uniform, num_frequencies: 32}
+    training: {fourier_initialization: random, fourier_fit: adam, patience: 400}

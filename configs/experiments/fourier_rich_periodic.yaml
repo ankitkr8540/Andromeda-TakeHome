@@ -1,0 +1,9 @@
+includes:
+- ../base.yaml
+- ../data/rich_periodic.yaml
+- ../model/fourier.yaml
+experiment:
+  name: function_approximation
+  run_name: fourier_rich_periodic_seed42
+  seed: 42
+  output_dir: outputs/fourier/rich_periodic

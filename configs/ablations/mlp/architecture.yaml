@@ -1,0 +1,32 @@
+# One seed: results do not measure variability across random initializations.
+seed: 42
+max_epochs: 20000
+reference: mixed_tanh
+targets: [rich_periodic]
+# Override only one factor relative to the mixed-width Tanh reference.
+model:
+  hidden_dims: [64, 256, 128]
+  activation: tanh
+variants:
+  mixed_tanh: {}
+  added_layer:
+    model:
+      hidden_dims: [64, 256, 128, 64]
+  relu:
+    model:
+      activation: relu
+  silu:
+    model:
+      activation: silu
+  learning_rate_low:
+    training:
+      learning_rate: 0.0001
+  learning_rate_high:
+    training:
+      learning_rate: 0.003
+  batch_small:
+    training:
+      batch_size: 32
+  batch_large:
+    training:
+      batch_size: 128

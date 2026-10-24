@@ -1,0 +1,33 @@
+# Periodic-only, single-seed exploratory study. Evaluation grids never enter fitting.
+model_type: fourier
+seed: 42
+max_epochs: 30000
+reference: spectral_adam_k8
+targets: [rich_periodic]
+model:
+  num_frequencies: 8
+variants:
+  random_adam_k8:
+    training:
+      fourier_initialization: random
+      fourier_fit: adam
+  spectral_only_k8:
+    training:
+      fourier_initialization: spectral
+      fourier_fit: spectral_only
+  spectral_adam_k8:
+    training:
+      fourier_initialization: spectral
+      fourier_fit: adam
+  spectral_adam_k4:
+    model:
+      num_frequencies: 4
+    training:
+      fourier_initialization: spectral
+      fourier_fit: adam
+  spectral_adam_k16:
+    model:
+      num_frequencies: 16
+    training:
+      fourier_initialization: spectral
+      fourier_fit: adam

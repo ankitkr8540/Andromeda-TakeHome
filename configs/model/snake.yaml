@@ -1,0 +1,10 @@
+model:
+  type: snake
+  dims: [64, 256, 128]
+  a0: 1.0
+  x_scale: 1.0
+preprocessing:
+  scaling: none
+training:
+  learning_rate: 0.0001
+  snake_learning_rate: 0.001

@@ -1,0 +1,19 @@
+includes:
+- ../base.yaml
+- ../data/rich_periodic.yaml
+- ../model/snake.yaml
+experiment:
+  name: function_approximation
+  run_name: snake_rich_periodic_seed42
+  seed: 42
+  output_dir: outputs/snake/rich_periodic
+# Final validation-selected Snake recipe used in the presentation.
+# Both network weights and per-neuron activation parameters use Adam LR 0.001.
+training:
+  batch_size: 128
+  learning_rate: 0.001
+  snake_learning_rate: 0.001
+  max_epochs: 8000
+  patience: 1500
+  min_delta: 1e-6
+  device: cpu

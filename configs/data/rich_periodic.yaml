@@ -1,0 +1,14 @@
+data:
+  target: rich_periodic
+  sample_size: 10000
+  x_min: -31.41592653589793
+  x_max: 31.41592653589793
+  extrapolation_bands:
+  - name: near
+    x_min: 31.41592653589793
+    x_max: 62.83185307179586
+    n: 2000
+  - name: far
+    x_min: 157.07963267948966
+    x_max: 188.49555921538757
+    n: 2000

@@ -1,0 +1,6 @@
+model:
+  type: mlp
+  input_dim: 1
+  hidden_dims: [64, 64]
+  output_dim: 1
+  activation: tanh

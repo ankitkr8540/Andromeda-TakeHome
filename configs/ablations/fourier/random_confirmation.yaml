@@ -1,0 +1,15 @@
+# Full-budget confirmation after validation-based exploratory tuning.
+model_type: fourier
+seed: 42
+max_epochs: 30000
+reference: log_uniform_k128_adam
+targets: [rich_periodic]
+model:
+  num_frequencies: 128
+  frequency_initialization: log_uniform
+variants:
+  log_uniform_k128_adam:
+    training:
+      fourier_initialization: random
+      fourier_fit: adam
+      patience: 3000

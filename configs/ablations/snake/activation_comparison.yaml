@@ -1,0 +1,17 @@
+# Paired activation experiment. Snake learns one positive alpha per hidden neuron.
+seed: 42
+max_epochs: 20000
+reference: tanh
+targets: [rich_periodic]
+model:
+  hidden_dims: [64, 256, 128]
+  activation: tanh
+variants:
+  tanh:
+    training:
+      learning_rate: 0.0001
+  snake:
+    model:
+      activation: snake
+    training:
+      learning_rate: 0.0001
