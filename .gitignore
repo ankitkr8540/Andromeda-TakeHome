@@ -15,4 +15,4 @@ mlflow.db-*
 outputs2/
 outputs/
 presentation/
-docs/
+docs/_build/
