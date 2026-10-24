@@ -12,5 +12,7 @@ artifacts/
 dist/
 mlflow.db-*
 
+outputs2/
 outputs/
-docs/_build/
+presentation/
+docs/
