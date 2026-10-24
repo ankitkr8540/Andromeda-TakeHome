@@ -238,10 +238,6 @@ by the code from Nyquist or an automatically inferred target period. Adam does
 not constrain learned frequencies to that interval. No exact target frequencies
 are supplied to the fitting procedure.
 
-To reproduce the ablation and multi-seed experiments, see the
-[study reproduction guide](docs/reproduce_studies.md). These optional studies
-run multiple training jobs and can take substantial CPU time.
-
 ## Read the outputs
 
 Individual training runs create a new UTC-timestamped directory beneath their configured
@@ -420,8 +416,7 @@ snapshot.
 
 ## Optional: build the documentation
 
-The Sphinx documentation contains the **study reproduction guide, folder
-structure, and Python API**.
+The Sphinx documentation contains the **folder structure and Python API**.
 API pages are generated from the implementation's docstrings. Documentation
 sources live in `docs/`; generated HTML under `docs/_build/` is ignored by Git.
 
