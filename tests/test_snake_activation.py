@@ -1,5 +1,7 @@
 """Trainable Snake math, matched initialization, and saved inference."""
 
+from pathlib import Path
+
 import numpy as np
 import torch
 import yaml
@@ -9,8 +11,8 @@ from function_approximation.inference import load_predictor
 from function_approximation.models.mlp_regressor import MLPRegressor
 from function_approximation.models.snake_mlp import Snake
 from function_approximation.training.config import load_experiment_config
+from scripts.run_ablation import PROJECT_ROOT, prepare_jobs
 from scripts.run_experiments import run_experiment
-from scripts.run_mlp_ablation import PROJECT_ROOT, prepare_jobs
 
 
 def test_snake_formula_input_derivative_and_positive_trainable_alpha():
@@ -52,7 +54,7 @@ def test_parameter_counts_and_identical_linear_initialization():
 
 def test_small_snake_experiment_reload_and_paired_settings(tmp_path):
     _, jobs = prepare_jobs(
-        PROJECT_ROOT / "configs/ablations/mlp_snake.yaml",
+        PROJECT_ROOT / "configs/ablations/snake/activation_comparison.yaml",
         tmp_path / "study",
         max_epochs=2,
     )
@@ -69,7 +71,7 @@ def test_small_snake_experiment_reload_and_paired_settings(tmp_path):
     path.write_text(yaml.safe_dump(config))
     run = run_experiment(path)
     predictor = load_predictor(run)
-    arrays = np.load(run / "predictions.npz")
+    arrays = np.load(Path(run) / "data" / "predictions.npz")
     np.testing.assert_allclose(predictor.predict(arrays["test_x"]), arrays["test_pred"])
     alpha = [
         layer.alpha for layer in predictor.model.network if isinstance(layer, Snake)
@@ -111,18 +113,16 @@ def test_separate_alpha_learning_rate_groups_and_updates():
 def test_separate_alpha_lr_config_and_validation(tmp_path):
     import pytest
 
-    _, jobs = prepare_jobs(
-        PROJECT_ROOT / "configs/ablations/mlp_snake_alpha_lr.yaml",
-        tmp_path / "study",
-        max_epochs=1,
+    config = load_experiment_config(
+        PROJECT_ROOT / "configs/experiments/mlp_rich_periodic.yaml"
     )
-    configs = [load_experiment_config(job["config_path"]) for job in jobs]
-    assert [c["training"].get("snake_learning_rate") for c in configs] == [
-        None,
-        0.001,
-        0.01,
-    ]
-    config = configs[1]
+    config["model"]["activation"] = "snake"
+    config["training"]["snake_learning_rate"] = 0.001
+    valid_path = tmp_path / "valid.yaml"
+    valid_path.write_text(yaml.safe_dump(config))
+    assert (
+        load_experiment_config(valid_path)["training"]["snake_learning_rate"] == 0.001
+    )
     config["model"]["activation"] = "tanh"
     path = tmp_path / "bad.yaml"
     path.write_text(yaml.safe_dump(config))

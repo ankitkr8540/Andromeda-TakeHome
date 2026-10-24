@@ -52,11 +52,16 @@ def test_logging_switches_filter_only_uploads(
     upload = Mock()
     monkeypatch.setattr("mlflow.log_artifact", upload)
     log_output_artifacts(tmp_path, {disabled: False} if disabled else {})
-    assert {
-        Path(call.args[0]).name for call in upload.call_args_list
-    } == names - excluded
+    assert {Path(call.args[0]).name for call in upload.call_args_list} == (
+        names | {"ignored.txt"}
+    ) - excluded
     assert all(
-        call.kwargs["artifact_path"] == "experiment_outputs"
+        call.kwargs["artifact_path"]
+        == (
+            "experiment_outputs/nested"
+            if Path(call.args[0]).name == "ignored.txt"
+            else "experiment_outputs"
+        )
         for call in upload.call_args_list
     )
     assert {path.name for path in tmp_path.iterdir() if path.is_file()} == names

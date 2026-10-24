@@ -154,3 +154,14 @@ def test_cli_loads_output_and_returns_predictions_as_json(saved_artifacts):
         payload["predictions"],
         predict_values(model, preprocessor, np.array(payload["x"])),
     )
+
+
+def test_structured_run_reloads_same_model_without_flat_files(saved_artifacts):
+    path, model, preprocessor = saved_artifacts
+    (path / "model").mkdir()
+    for name in ("best_model.pt", "preprocessor.joblib"):
+        (path / name).rename(path / "model" / name)
+    x = np.array([-40.0, 0.25, 180.0])
+    np.testing.assert_array_equal(
+        load_predictor(path).predict(x), predict_values(model, preprocessor, x)
+    )

@@ -1,4 +1,3 @@
-
 import numpy as np
 import pytest
 import torch
@@ -160,19 +159,21 @@ def test_nonfinite_data_rejected(invalid_value):
         FunctionDataset(x, y)
 
 
-@pytest.mark.parametrize('values', [np.array([]), np.ones((2, 2)), np.ones((2, 1, 1)), np.array([1e100])])
+@pytest.mark.parametrize(
+    "values", [np.array([]), np.ones((2, 2)), np.ones((2, 1, 1)), np.array([1e100])]
+)
 def test_invalid_scalar_dataset(values):
     with pytest.raises(ValueError):
         FunctionDataset(values, values)
 
 
-@pytest.mark.parametrize('batch_size', [True, 1.5, -1])
+@pytest.mark.parametrize("batch_size", [True, 1.5, -1])
 def test_invalid_batch_size_type(processed_data, batch_size):
-    with pytest.raises(ValueError, match='positive integer'):
+    with pytest.raises(ValueError, match="positive integer"):
         create_dataloaders(processed_data, batch_size=batch_size)
 
 
 def test_extrapolation_not_loaded_for_training(processed_data):
-    data = {**processed_data, 'extrap_far': (np.array([1000.]), np.array([0.]))}
+    data = {**processed_data, "extrap_far": (np.array([1000.0]), np.array([0.0]))}
     loaders = create_dataloaders(data)
-    assert set(loaders) == {'train', 'val', 'test'}
+    assert set(loaders) == {"train", "val", "test"}

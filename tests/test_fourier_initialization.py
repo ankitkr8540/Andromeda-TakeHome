@@ -35,7 +35,9 @@ def test_random_initialization_remains_available_without_fitting_data(
     output = run_experiment(path)
     import json
 
-    initialization = json.loads((output / "initialization.json").read_text())
+    initialization = json.loads(
+        (Path(output) / "diagnostics" / "initialization.json").read_text()
+    )
     assert initialization["method"] == "random"
     torch.manual_seed(config["experiment"]["seed"])
     reference = FourierRegressor(

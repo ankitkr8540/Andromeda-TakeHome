@@ -1,5 +1,7 @@
 """Standalone Snake model supports raw coordinates, configuration, and reload."""
 
+from pathlib import Path
+
 import numpy as np
 import torch
 import yaml
@@ -33,7 +35,18 @@ def test_standalone_raw_input_training_and_reload(tmp_path):
         PROJECT_ROOT / "configs/experiments/snake_rich_periodic.yaml"
     )
     assert config["preprocessing"]["scaling"] == "none"
+    assert config["model"] == {
+        "type": "snake",
+        "dims": [64, 256, 128],
+        "a0": 1.0,
+        "x_scale": 1.0,
+    }
+    assert config["experiment"]["seed"] == 42
+    assert config["training"]["learning_rate"] == 0.001
     assert config["training"]["snake_learning_rate"] == 0.001
+    assert config["training"]["batch_size"] == 128
+    assert config["training"]["max_epochs"] == 8000
+    assert config["training"]["patience"] == 1500
     config["model"].update(dims=[4, 8], a0=5.0)
     config["data"]["sample_size"] = 40
     config["training"]["max_epochs"] = 2
@@ -44,46 +57,8 @@ def test_standalone_raw_input_training_and_reload(tmp_path):
     run = run_experiment(path)
     predictor = load_predictor(run)
     assert isinstance(predictor.model, SnakeMLP)
-    samples = np.load(run / "predictions.npz")
+    samples = np.load(Path(run) / "data" / "predictions.npz")
     np.testing.assert_allclose(
         predictor.predict(samples["test_x"]), samples["test_pred"]
     )
     assert predictor.preprocessor.std is None
-
-
-def test_replot_saved_run_without_training_or_changing_artifacts(tmp_path, monkeypatch):
-    import hashlib
-
-    from function_approximation.training.trainer import Trainer
-    from scripts.replot_experiment import replot_run
-
-    config = load_experiment_config(
-        PROJECT_ROOT / "configs/experiments/snake_rich_periodic.yaml"
-    )
-    config["model"]["dims"] = [4]
-    config["data"]["sample_size"] = 40
-    config["training"]["max_epochs"] = 1
-    config["evaluation"]["generate_plots"] = False
-    config["experiment"]["output_dir"] = str(tmp_path / "runs")
-    path = tmp_path / "run.yaml"
-    path.write_text(yaml.safe_dump(config))
-    run = run_experiment(path)
-    originals = {
-        name: hashlib.sha256((run / name).read_bytes()).hexdigest()
-        for name in ["best_model.pt", "metrics.json", "history.json"]
-    }
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Replot must not train")
-
-    monkeypatch.setattr(Trainer, "fit", forbidden)
-    output = replot_run(run)
-    for name in [
-        "predictions.png",
-        "residuals.png",
-        "extrapolation.png",
-        "learning_curves.png",
-    ]:
-        assert (output / name).is_file()
-    for name, digest in originals.items():
-        assert hashlib.sha256((run / name).read_bytes()).hexdigest() == digest

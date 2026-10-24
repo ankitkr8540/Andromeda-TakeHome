@@ -158,9 +158,11 @@ def test_full_pipeline_saved_inference_and_spectrum(
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config))
     output = run_experiment(path)
-    spectrum = json.loads((output / "spectrum.json").read_text())
-    predictions = np.load(output / "predictions.npz")
-    initialization = json.loads((output / "initialization.json").read_text())
+    spectrum = json.loads((Path(output) / "diagnostics" / "spectrum.json").read_text())
+    predictions = np.load(Path(output) / "data" / "predictions.npz")
+    initialization = json.loads(
+        (Path(output) / "diagnostics" / "initialization.json").read_text()
+    )
     assert initialization["method"] == "spectral"
     assert initialization["training_samples"] == 28
     assert len(initialization_calls) == 1
@@ -189,7 +191,7 @@ def test_full_pipeline_saved_inference_and_spectrum(
     assert not predictor.model.training
     for checkpoint_name in ("best",):
         checkpoint = torch.load(
-            output / f"{checkpoint_name}_model.pt", weights_only=True
+            (Path(output) / "model" / f"{checkpoint_name}_model.pt"), weights_only=True
         )
         assert checkpoint["model_type"] == "fourier"
         model = build_model(checkpoint["model_type"], checkpoint["model_config"])
@@ -209,7 +211,7 @@ def test_full_pipeline_saved_inference_and_spectrum(
         runs = mlflow.search_runs([experiment.experiment_id], output_format="list")
         assert len(runs) == 1 and runs[0].info.status == "FINISHED"
         artifacts = mlflow.MlflowClient().list_artifacts(
-            runs[0].info.run_id, "experiment_outputs"
+            runs[0].info.run_id, "experiment_outputs/diagnostics"
         )
         assert "spectrum.json" in {Path(artifact.path).name for artifact in artifacts}
         assert "initialization.json" in {

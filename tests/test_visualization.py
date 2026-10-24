@@ -276,10 +276,11 @@ def test_distance_plot_sorts_records_and_preserves_ppt_style(tmp_path):
         np.testing.assert_array_equal(ax.lines[0].get_xdata(), [15, 55])
         np.testing.assert_array_equal(ax.lines[0].get_ydata(), [0.05, 0.15])
         assert ax.lines[0].get_color() == "#969FA5"
-        assert ax.lines[1].get_color() == "#4B1535"
-        assert ax.lines[-1].get_label() == "Training-mean baseline (0.8619)"
+        assert ax.lines[1].get_color() == "#BD3156"
+        assert ax.lines[-1].get_linestyle() == ":"
+        assert any("predict-the-mean (0.86)" in text.get_text() for text in ax.texts)
         assert "π" in ax.xaxis.get_major_formatter()(20, 0)
-        assert "Input x" in ax.get_xlabel()
+        assert "Distance from origin" in ax.get_xlabel()
         assert not ax.spines["top"].get_visible()
         assert not ax.spines["right"].get_visible()
         assert path.is_file()

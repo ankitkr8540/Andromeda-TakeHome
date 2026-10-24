@@ -165,6 +165,14 @@ def test_short_experiment_artifacts_and_metrics(tmp_path, monkeypatch, config_na
     config_path.write_text(yaml.safe_dump(config))
     output = run_experiment(config_path)
 
+    assert {path.name for path in output.iterdir()} == {
+        "config.yaml",
+        "model",
+        "data",
+        "metrics",
+        "diagnostics",
+        "plots",
+    }
     expected_artifacts = {
         "best_model.pt",
         "config.yaml",
@@ -177,26 +185,32 @@ def test_short_experiment_artifacts_and_metrics(tmp_path, monkeypatch, config_na
         "predictions.npz",
         "baseline_metrics.json",
     }
-    assert expected_artifacts <= {path.name for path in output.iterdir()}
-    official = json.loads((output / "metrics.json").read_text())
-    history = json.loads((output / "history.json").read_text())
+    assert expected_artifacts <= {
+        path.name for path in output.rglob("*") if path.is_file()
+    }
+    official = json.loads((Path(output) / "metrics" / "metrics.json").read_text())
+    history = json.loads((Path(output) / "diagnostics" / "history.json").read_text())
     assert not (output / "final_model.pt").exists()
     assert not (output / "checkpoint_comparison.json").exists()
 
     dataset = DataGenerator(**config["data"]).generate()
-    preprocessor = joblib.load(output / "preprocessor.joblib")
-    baseline = json.loads((output / "baseline_metrics.json").read_text())
+    preprocessor = joblib.load(Path(output) / "model" / "preprocessor.joblib")
+    baseline = json.loads(
+        (Path(output) / "metrics" / "baseline_metrics.json").read_text()
+    )
     assert baseline["prediction"] == pytest.approx(float(np.mean(dataset["train"][1])))
     from function_approximation.inference import load_predictor
 
     predictor = load_predictor(output)
-    exported = np.load(output / "predictions.npz")
+    exported = np.load(Path(output) / "data" / "predictions.npz")
     np.testing.assert_array_equal(
         predictor.predict(dataset["test"][0]),
         exported["test_pred"],
     )
     for name in ("best",):
-        checkpoint = torch.load(output / f"{name}_model.pt", weights_only=True)
+        checkpoint = torch.load(
+            (Path(output) / "model" / f"{name}_model.pt"), weights_only=True
+        )
         model = MLPRegressor(**checkpoint["model_config"])
         model.load_state_dict(checkpoint["model_state_dict"])
         assert checkpoint["epoch"] == checkpoint["best_epoch"]
@@ -231,4 +245,11 @@ def test_short_experiment_artifacts_and_metrics(tmp_path, monkeypatch, config_na
         for split in ("train", "val", "test"):
             assert run.data.metrics[f"{split}_mse"] == official[split]["mse"]
     artifacts = client.list_artifacts(run.info.run_id, "experiment_outputs")
-    assert expected_artifacts <= {Path(artifact.path).name for artifact in artifacts}
+    names = {Path(artifact.path).name for artifact in artifacts}
+    for artifact in artifacts:
+        if artifact.is_dir:
+            names.update(
+                Path(child.path).name
+                for child in client.list_artifacts(run.info.run_id, artifact.path)
+            )
+    assert expected_artifacts <= names

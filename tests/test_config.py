@@ -177,14 +177,14 @@ def test_extrapolation_bands_are_evaluated_but_never_fitted(tmp_path, config):
 
     output = run_experiment(path)
 
-    metrics = json.loads((output / "metrics.json").read_text())
+    metrics = json.loads((Path(output) / "metrics" / "metrics.json").read_text())
     assert set(metrics) == {"train", "val", "test", "extrap_near", "extrap_far"}
-    predictions = np.load(output / "predictions.npz")
+    predictions = np.load(Path(output) / "data" / "predictions.npz")
     assert predictions["extrap_far_x"].min() >= -700.0
     # The training scaler is fitted on train inputs only, never on bands.
-    preprocessor = joblib.load(output / "preprocessor.joblib")
+    preprocessor = joblib.load(Path(output) / "model" / "preprocessor.joblib")
     assert preprocessor.mean == pytest.approx(predictions["train_x"].mean())
-    assert (output / "extrapolation.png").is_file()
+    assert (Path(output) / "plots" / "extrapolation.png").is_file()
 
 
 @pytest.mark.parametrize("target", ["rich_periodic", "unknown"])
