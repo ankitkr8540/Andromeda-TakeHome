@@ -37,4 +37,4 @@ nitpicky = True
 
 html_theme = "alabaster"
 html_title = project
-html_theme_options = {"description": "Folder structure and Python API"}
+html_theme_options = {"description": "Reproduction guide, folder structure, and Python API"}

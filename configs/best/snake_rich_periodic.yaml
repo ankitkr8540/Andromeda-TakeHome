@@ -1,0 +1,6 @@
+# Selected recipe for the seed-42, 10,000-point rich_periodic benchmark.
+includes:
+- ../experiments/snake_rich_periodic.yaml
+experiment:
+  run_name: best_snake_rich_periodic_seed42
+  output_dir: outputs/best/snake/rich_periodic

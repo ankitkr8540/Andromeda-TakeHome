@@ -8,6 +8,70 @@ evaluation curves; saved-model inference never calls it.
 The central question is whether a model that interpolates accurately also
 continues the waveform beyond the observed interval.
 
+## Quickstart
+
+Run these commands in a terminal. You need Git and
+[`uv`](https://docs.astral.sh/uv/) installed. `uv` manages Python and the project
+dependencies; you do not need to install Python separately. The project pins
+Python 3.11 in `.python-version` and runs on CPU by default.
+
+### 1. Install uv (once per laptop)
+
+If `uv --version` already works, skip this step. On macOS or Linux:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Restart your terminal after installation, then check:
+
+```bash
+uv --version
+```
+
+For Windows and other installation options, see the
+[uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+### 2. Clone the repository and install dependencies
+
+```bash
+git clone https://github.com/ankitkr8540/Andromeda-TakeHome.git
+cd Andromeda-TakeHome
+uv sync --locked
+```
+
+If you already have the repository, open a terminal in its root directory and
+run only `uv sync --locked`. This downloads Python 3.11 if needed, creates the
+local `.venv` environment, and installs the locked dependencies, including test
+and lint tools. The first installation needs internet access.
+
+You do **not** need to run `uv venv` or activate the environment separately.
+Every `uv run` command below uses the project's environment automatically.
+Run all commands from the repository root.
+
+### 3. Check the installation
+
+```bash
+MPLBACKEND=Agg uv run python -m pytest -q
+```
+
+This runs the test suite without opening plot windows. In Windows PowerShell,
+set `$env:MPLBACKEND = "Agg"` first, then run `uv run python -m pytest -q`.
+
+### 4. Train your first model
+
+```bash
+uv run python -m scripts.run_experiments --config configs/experiments/fourier_rich_periodic.yaml
+```
+
+This trains the Fourier model and saves a new run under
+`outputs/fourier/rich_periodic/`. The command prints the completed run's path.
+Open its `plots/extrapolation.png` to inspect predictions, or read
+`metrics/metrics.json` for scores. Training can take time on CPU; the full
+ablation studies below run multiple experiments and take longer.
+
+No GPU, Docker, or MLflow server is required for the default workflow.
+
 ## Presentation
 
 The take-home presentation summarizes the methodology, ablation studies,
@@ -16,6 +80,10 @@ interpolation and extrapolation results, and limitations.
 - [Presentation PDF](takehome.pdf)
 
 ## Results at a glance
+
+[![Results slide comparing far-extrapolation RMSE: Tanh MLP 1.95, Snake MLP 0.39, and Fourier regressor 1.2 × 10⁻⁵.](docs/assets/results-at-a-glance.png)](takehome.pdf)
+
+Click the slide to open the full presentation.
 
 **10,000 in-domain points (7,000 train / 1,000 validation / 2,000 test), seed 42,
 one noise-free periodic target.** Near and far bands contain 2,000 evaluation
@@ -41,22 +109,6 @@ the existing recipes and epoch limits; it did not retune the models or match
 optimizer-update counts across sample budgets. Both results concern one seed
 and one target, rather than general extrapolation guarantees.
 
-## Setup
-
-Use Python 3.11 and run commands from the repository root. Create an isolated
-environment (`--copies` is useful when working on an external drive):
-
-```bash
-python3.11 -m venv --copies .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip uv
-uv sync --locked --inexact
-```
-
-In a new terminal, activate the environment again with
-`source .venv/bin/activate`. The examples below use `uv run` and the locked
-project dependencies. Training defaults to CPU; MLflow tracking is disabled.
-
 ## Repository structure
 
 ```text
@@ -71,6 +123,7 @@ configs/
 ├── data/             # target, sample count, observed domain, evaluation bands
 ├── model/            # model-specific defaults
 ├── experiments/      # standalone MLP, Snake, and Fourier recipes
+├── best/             # selected recipes for all three models
 └── ablations/
     ├── mlp/          # architecture, activation, learning rate, batch size
     ├── snake/        # controlled Tanh versus Snake comparison
@@ -133,24 +186,38 @@ a fresh run under `outputs/notebooks/fourier/`; it does not overwrite the study
 results. A notebook interface and `ipykernel` are optional environment tools,
 not runtime requirements of the training package.
 
-## Train the standalone models
+## Train the selected models
+
+The three configs in `configs/best/` reproduce the selected training recipes
+reported above for the 10,000-point, seed-42 benchmark. Each includes the
+corresponding standalone experiment and applies the selected overrides.
+
+| Config | Selected recipe |
+| ------ | --------------- |
+| [`mlp_rich_periodic.yaml`](configs/best/mlp_rich_periodic.yaml) | Tanh [64, 256, 128], standardized inputs, Adam LR 0.0001 |
+| [`snake_rich_periodic.yaml`](configs/best/snake_rich_periodic.yaml) | Snake [64, 256, 128], raw inputs, LR 0.001 for weights and activation parameters, batch 128 |
+| [`fourier_rich_periodic.yaml`](configs/best/fourier_rich_periodic.yaml) | K=8, raw inputs, spectral initialization followed by Adam |
+
+Run all three commands below from the repository root to generate the selected
+Tanh MLP, Snake MLP, and Fourier checkpoints. You can also run just one model:
 
 ```bash
-uv run python -m scripts.run_experiments --config configs/experiments/mlp_rich_periodic.yaml
-uv run python -m scripts.run_experiments --config configs/experiments/snake_rich_periodic.yaml
-uv run python -m scripts.run_experiments --config configs/experiments/fourier_rich_periodic.yaml
+uv run python -m scripts.run_experiments --config configs/best/mlp_rich_periodic.yaml
+uv run python -m scripts.run_experiments --config configs/best/snake_rich_periodic.yaml
+uv run python -m scripts.run_experiments --config configs/best/fourier_rich_periodic.yaml
 ```
 
-| Recipe        | Model / preprocessing               | Adam LR | Batch | Maximum epochs | Patience |
-| ------------- | ----------------------------------- | ------: | ----: | -------------: | -------: |
-| Reference MLP | Tanh [64, 256, 128], standardized x |   0.001 |    64 |         20,000 |      150 |
-| Tuned Snake   | [64, 256, 128], raw x               |   0.001 |   128 |          8,000 |    1,500 |
-| Fourier       | K=8, spectral initialization, raw x |   0.001 |    64 |         30,000 |    3,000 |
+Each command trains a fresh model and saves a timestamped run under
+`outputs/best/<model>/rich_periodic/`, including its validation-selected
+`model/best_model.pt`, resolved config, metrics, and plots. These YAML files
+contain training settings; trained weights are generated locally.
 
-The selected Tanh model in the presentation is the **learning-rate 0.0001
-ablation**, rather than the standalone reference recipe. Snake learns one
-positive activation scale per hidden neuron using
-`Snake(z) = z + sin²(a z) / a`; the standalone recipe uses LR 0.001 for both
+“Best” refers to the selected recipes among the configurations evaluated for
+this target and sample budget. It does not guarantee the best result for other
+functions, seeds, or datasets. Exact scores may vary across environments.
+
+Snake learns one positive activation scale per hidden neuron using
+`Snake(z) = z + sin²(a z) / a`. The selected recipe uses LR 0.001 for both
 network weights and activation parameters.
 
 Fourier predictions are a bias plus K weighted sine/cosine pairs (3K+1
@@ -165,61 +232,13 @@ by the code from Nyquist or an automatically inferred target period. Adam does
 not constrain learned frequencies to that interval. No exact target frequencies
 are supplied to the fitting procedure.
 
-## Run the studies
-
-Each command runs the full configured budget with early stopping. These studies
-can take substantial CPU time. Add `--dry-run` to prepare configs without
-training. Use a fresh output directory when changing a study specification;
-rerunning the same study directory resumes matching completed jobs.
-
-```bash
-# Eight MLP architecture/hyperparameter variants
-uv run python -m scripts.run_ablation \
-  --study configs/ablations/mlp/architecture.yaml \
-  --output-dir outputs/ablations/mlp/architecture
-
-# Two activation variants with the same standardized-input training recipe
-uv run python -m scripts.run_ablation \
-  --study configs/ablations/snake/activation_comparison.yaml \
-  --output-dir outputs/ablations/snake/activation_comparison
-
-# Five Fourier variants: random + Adam K=8; spectral only K=8;
-# spectral + Adam K=4, K=8, K=16
-uv run python -m scripts.run_ablation \
-  --study configs/ablations/fourier/initialization_and_capacity.yaml \
-  --output-dir outputs/ablations/fourier/initialization_and_capacity
-
-# Repeat the five Fourier variants with 1,000 in-domain points
-uv run python -m scripts.run_ablation \
-  --study configs/ablations/fourier/initialization_and_capacity_1000.yaml \
-  --output-dir outputs/ablations/fourier/initialization_and_capacity_1000
-
-# Seven exploratory random-start variants, capped at 1,500 epochs
-uv run python -m scripts.run_ablation \
-  --study configs/ablations/fourier/random_pilot.yaml \
-  --output-dir outputs/ablations/fourier/random_pilot
-
-# Log-uniform K=128 random-start confirmation, up to 30,000 epochs
-uv run python -m scripts.run_ablation \
-  --study configs/ablations/fourier/random_confirmation.yaml \
-  --output-dir outputs/ablations/fourier/random_confirmation
-
-# Matched K=8 random versus spectral initialization: six runs, three seeds
-uv run python -m scripts.run_multiseed \
-  --study configs/ablations/fourier/matched_multiseed.yaml \
-  --output-dir outputs/ablations/fourier/matched_multiseed \
-  --seeds 42 43 44
-```
-
-The ablation runner defaults to one CPU thread per run. The multi-seed runner
-also uses one thread. Seeds control initialization and training shuffling;
-the input grids do not change with seed. Matched arms share the Adam budget
-and frequency interval, but spectral initialization performs additional
-preprocessing work. The exploratory K=128 arm is not part of that matched study.
+To reproduce the ablation and multi-seed experiments, see the
+[study reproduction guide](docs/reproduce_studies.md). These optional studies
+run multiple training jobs and can take substantial CPU time.
 
 ## Read the outputs
 
-Standalone runs create a new UTC-timestamped directory beneath their configured
+Individual training runs create a new UTC-timestamped directory beneath their configured
 `experiment.output_dir`. The runner prints the run path on completion:
 
 ```text
@@ -264,11 +283,32 @@ a fresh clone must generate its own checkpoints.
 
 ## Inference from a saved run
 
+After training with the configs in `configs/best/`, use the commands below to
+load each model's saved best-validation checkpoint. Replace `RUN_TIMESTAMP`
+in each path with that model's timestamped run folder, printed at the end of
+training. Each model can have a different timestamp.
+
 ```bash
+# Selected Tanh MLP
 uv run python -m function_approximation.inference \
-  --run-dir RUN_DIR \
+  --run-dir outputs/best/mlp/rich_periodic/RUN_TIMESTAMP \
+  --x -3.14 0 100
+
+# Selected Snake MLP
+uv run python -m function_approximation.inference \
+  --run-dir outputs/best/snake/rich_periodic/RUN_TIMESTAMP \
+  --x -3.14 0 100
+
+# Selected Fourier model
+uv run python -m function_approximation.inference \
+  --run-dir outputs/best/fourier/rich_periodic/RUN_TIMESTAMP \
   --x -3.14 0 100
 ```
+
+Replace the numbers after `--x` with your input values. These commands perform
+inference only; each run must already contain both `model/best_model.pt` and
+`model/preprocessor.joblib`. If a model has not finished training, first run
+its command in [Train the selected models](#train-the-selected-models).
 
 Pass the **run root**, not its `model/` subdirectory. The CLI loads the checkpoint
 and matching preprocessor, accepts original unscaled inputs, and returns JSON
@@ -276,26 +316,48 @@ predictions. It also supports legacy flat run directories. No training data,
 labels, or reference-function calls are needed. Extrapolation is permitted but
 accuracy outside the observed interval is not guaranteed.
 
-## Evaluate error versus distance
+### Understanding the inputs and outputs
 
-Supply the timestamped run roots for the selected models:
+`--x -3.14 0 100` requests three predictions, one for each input, in that order.
+These are example values; replace them with your own space-separated numbers.
+Inputs are in original units: do not standardize them yourself.
+
+The training interval is [−10π, 10π], approximately [−31.42, 31.42]. Inputs
+−3.14 and 0 test interpolation; 100 tests extrapolation. The JSON output contains
+`x` and `predictions` arrays with matching positions. The CLI returns model
+predictions only. Use the UI below to compare them with reference outputs.
+
+### Compare inputs in a simple UI
+
+The UI is implemented in [`streamlit_app.py`](streamlit_app.py). Train all three
+selected models to make each available in the dropdown, then launch it (a single
+completed model is enough to try the UI):
 
 ```bash
-uv run python -m scripts.evaluate_extrapolation_distance \
-  --run "Tanh MLP" path/to/selected/tanh/run \
-  --run "Snake MLP" path/to/snake/run \
-  --run "Fourier spectral only" path/to/spectral/only/run \
-  --run "Fourier spectral + Adam" path/to/spectral/adam/run \
-  --output-dir outputs/evaluation/model_distance \
-  --max-pi 1000
+uv sync --locked --group ui
+uv run --group ui streamlit run streamlit_app.py
 ```
 
-The evaluator loads fixed checkpoints with a common target, training domain,
-and sample count. It evaluates 10π-wide bands with 2,000 samples each by default;
-no model is trained or reselected. Outputs include per-band `metrics.csv`,
-`source.json` checkpoint provenance, and PNG/SVG figures. The x-axis reports band
-centres; the last band (990π, 1000π] is plotted at 995π. The saved training mean
-from the first run supplies the per-band baseline when available.
+Open the local URL printed in the terminal (usually `http://localhost:8501`).
+
+1. Choose one saved model from the dropdown. Only runs under `outputs/best/`
+   with both a checkpoint and saved preprocessor appear.
+2. Choose **Enter numbers** for values separated by commas, spaces, or newlines
+   (for example, `-3.14, 0, 100`), or **Generate a range** and set the start, end,
+   and number of points (2–10,000). Range inputs are evenly spaced and include
+   both endpoints; the start must be less than the end.
+3. Choose **Table** or **Plot**, then click **Compare**.
+
+The table shows each input, reference output, predicted output, and absolute
+error. The plot shows reference and predicted points for manual inputs, or curves
+connecting the generated points for a range.
+To capture comparisons for all three models, repeat these steps for Tanh MLP,
+Snake MLP, and Fourier using the same inputs. Click **Download comparison CSV**
+after each comparison and save a separate file for each model. For a visual
+record, select **Plot** and take a screenshot of each result. The UI displays
+one model at a time. No model is trained in the UI.
+The reference function is evaluated separately for comparison; model predictions
+still come exclusively from the saved checkpoint and preprocessor.
 
 ## Interpretation and limitations
 
@@ -331,7 +393,8 @@ snapshot.
 
 ## Optional: build the documentation
 
-The Sphinx documentation contains the **folder structure and Python API**.
+The Sphinx documentation contains the **study reproduction guide, folder
+structure, and Python API**.
 API pages are generated from the implementation's docstrings. Documentation
 sources live in `docs/`; generated HTML under `docs/_build/` is ignored by Git.
 
