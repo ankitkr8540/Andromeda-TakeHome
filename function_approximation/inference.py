@@ -48,11 +48,9 @@ def predict_values(
     Notes:
         Disables gradients, uses the model's device, and restores its original
         training/evaluation mode even if prediction fails."""
-    parameter = next(model.parameters())
-    dtype = np.float64 if parameter.dtype == torch.float64 else np.float32
-    x_processed = preprocessor.transform(x, dtype=dtype)
+    x_processed = preprocessor.transform(x)
     if not np.isfinite(x_processed).all():
-        raise ValueError("Preprocessed inputs must be finite in the model dtype.")
+        raise ValueError("Preprocessed inputs must be finite in float32.")
     device = next(model.parameters()).device
     x_tensor = torch.from_numpy(x_processed).to(device)
     was_training = model.training
@@ -109,8 +107,6 @@ def load_predictor(run_dir: str | Path, device: str = "cpu") -> Predictor:
         RuntimeError: Saved weights do not match the reconstructed architecture.
 
     Notes:
-        All model weights are promoted to float64 for evaluation.
-        This does not refit or modify saved artifacts.
         Loading does not generate labels or train the model. Joblib uses pickle:
         only load artifacts from trusted sources. Other deserialization errors
         propagate from PyTorch/joblib."""
@@ -140,8 +136,6 @@ def load_predictor(run_dir: str | Path, device: str = "cpu") -> Predictor:
         checkpoint.get("model_type", "mlp"), checkpoint["model_config"]
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    # Preserve saved parameter values while reducing phase-rounding error at large x.
-    model.double()
     if any(not torch.isfinite(parameter).all() for parameter in model.parameters()):
         raise ValueError("Checkpoint contains nonfinite model parameters.")
     preprocessor = joblib.load(preprocessor_path)

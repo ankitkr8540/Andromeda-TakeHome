@@ -328,10 +328,6 @@ predictions. It also supports legacy flat run directories. No training data,
 labels, or reference-function calls are needed. Extrapolation is permitted but
 accuracy outside the observed interval is not guaranteed.
 
-All saved models use float64 inference with the existing weights promoted
-to double precision, reducing numerical phase error at large inputs. Training
-and saved benchmark metrics use float32; inference scores can therefore differ.
-
 ### Understanding the inputs and outputs
 
 `--x -3.14 0 100` requests three predictions, one for each input, in that order.

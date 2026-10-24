@@ -195,7 +195,7 @@ def evaluate_runs(
             {
                 "checkpoints": sources,
                 "selection": "Explicit saved checkpoints; no refitting or reselection. Evaluation only.",
-                "precision": "All models use float64 inference with promoted saved weights. No refitting. See per-checkpoint inference_dtype.",
+                "precision": "Saved float32 inference; error includes model mismatch and numerical precision.",
                 "training_domain": [expected[1], train_max],
                 "baseline_prediction": baseline_prediction,
                 "baseline_source": str(
