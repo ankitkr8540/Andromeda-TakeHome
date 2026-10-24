@@ -175,8 +175,8 @@ preprocessing, model architecture, optimizer settings, early stopping,
 evaluation, and tracking. Configuration is validated before an output directory
 is created.
 
-The supplied data settings generate 840 training samples, 140 validation samples,
-and 420 test samples over `[-10π, 10π]` with a fixed seed of 42. Standard scaling
+The supplied data settings generate 7,000 training samples, 1,000 validation samples,
+and 2,000 test samples over `[-10π, 10π]` with a fixed seed of 42. Standard scaling
 is fitted on training inputs only. The test split is never used for scaling,
 optimization, checkpoint selection, or early stopping.
 
@@ -217,3 +217,18 @@ choose architecture and hyperparameters using validation metrics and keep the
 test split for final reporting. Useful next experiments include varying network
 width/depth, activation, sample density, noise level, target function, and split
 seed.
+
+## Data sampling API
+
+`DataGenerator(sample_size=10000)` produces 7,000 training, 1,000 validation,
+and 2,000 test observations on disjoint, evenly spaced interpolation grids.
+The old `n_train`, `n_val`, `n_test`, `sampling`, `split_strategy`, and `seed`
+constructor arguments are retired. Experiment seeds control training only.
+Only `rich_periodic` is supported as a reference target.
+
+Counts and intervals are validated for Python and YAML callers. Grid offsets
+adjust deterministically when float32 rounding would merge held-out and training
+inputs. Newly generated held-out coordinates can differ from historical runs;
+saved artifacts are not rewritten. Scaling is fitted on training inputs only,
+and conversion overflow is rejected. Plotting is delegated to the evaluation
+module through the compatible `DataGenerator.plot()` method.
