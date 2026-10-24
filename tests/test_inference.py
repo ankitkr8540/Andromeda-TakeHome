@@ -31,7 +31,7 @@ def saved_artifacts(tmp_path):
         tmp_path / "best_model.pt",
     )
     joblib.dump(preprocessor, tmp_path / "preprocessor.joblib")
-    return tmp_path, model, preprocessor
+    return tmp_path, model.double(), preprocessor
 
 
 def test_saved_predictions_roundtrip_without_target_function(
@@ -106,12 +106,24 @@ def test_output_directory_loads_each_model_with_saved_preprocessing(
     )
     joblib.dump(preprocessor, tmp_path / "preprocessor.joblib")
     x = np.array([-40.0, 0.25, 180.0])
+    model.double()
     expected = predict_values(model, preprocessor, x)
     predictor = load_predictor(tmp_path)
+    assert next(predictor.model.parameters()).dtype == torch.float64
     np.testing.assert_array_equal(predictor.predict(x), expected)
     np.testing.assert_array_equal(
         predictor.predict(0.25), predict_values(model, preprocessor, np.array(0.25))
     )
+    if kind == "fourier":
+        original = np.array([[1000 * np.pi]], dtype=np.float64)
+        transformed = (
+            preprocessor.scaler.transform(original)
+            if preprocessor.scaler is not None
+            else original
+        )
+        with torch.inference_mode():
+            expected_far = model(torch.from_numpy(transformed)).numpy().ravel()
+        np.testing.assert_array_equal(predictor.predict(original), expected_far)
 
 
 @pytest.mark.parametrize("name", ["best_model.pt", "preprocessor.joblib"])

@@ -141,6 +141,7 @@ def evaluate_runs(
             "run_dir": str(run),
             "model_type": config["model"]["type"],
             "seed": config["experiment"]["seed"],
+            "inference_dtype": str(next(loaded[label].model.parameters()).dtype),
         }
     train_max = expected[2]
     if max_pi * np.pi <= train_max:
@@ -194,7 +195,7 @@ def evaluate_runs(
             {
                 "checkpoints": sources,
                 "selection": "Explicit saved checkpoints; no refitting or reselection. Evaluation only.",
-                "precision": "Saved float32 inference; error includes model mismatch and numerical precision.",
+                "precision": "All models use float64 inference with promoted saved weights. No refitting. See per-checkpoint inference_dtype.",
                 "training_domain": [expected[1], train_max],
                 "baseline_prediction": baseline_prediction,
                 "baseline_source": str(

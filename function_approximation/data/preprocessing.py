@@ -66,14 +66,16 @@ class DataPreprocessor:
         self.is_fitted = True
         return self
 
-    def transform(self, x: np.ndarray) -> np.ndarray:
+    def transform(self, x: np.ndarray, *, dtype=np.float32) -> np.ndarray:
         """Transform original-coordinate inputs using the fitted training statistics.
 
         Args:
             x: Finite scalar, vector, or column of inputs from any evaluation region.
+            dtype: Output precision, float32 by default or float64 for inference.
 
         Returns:
-            Float32 column of shape ``(N, 1)``. Fitted statistics remain unchanged.
+            Column of shape ``(N, 1)`` in the requested float32 or float64 dtype.
+            Fitted statistics remain unchanged; float32 remains the training default.
 
         Raises:
             RuntimeError: The preprocessor has not been fitted.
@@ -81,10 +83,12 @@ class DataPreprocessor:
                 float32 after transformation."""
         if not self.is_fitted:
             raise RuntimeError("Preprocessor has not been fitted.")
+        if np.dtype(dtype) not in (np.dtype(np.float32), np.dtype(np.float64)):
+            raise ValueError("Preprocessing dtype must be float32 or float64.")
         x = self._prepare_array(x)
         if self.scaler is not None:
             x = self.scaler.transform(x)
-        return self._as_float32(x)
+        return self._as_float32(x) if np.dtype(dtype) == np.float32 else x
 
     def transform_dataset(self, dataset: Dataset) -> Dataset:
         """Transform supplied splits without refitting, including extrapolation bands.
