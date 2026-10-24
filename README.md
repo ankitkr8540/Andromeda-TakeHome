@@ -8,6 +8,39 @@ evaluation curves; saved-model inference never calls it.
 The central question is whether a model that interpolates accurately also
 continues the waveform beyond the observed interval.
 
+## Presentation
+
+The take-home presentation summarizes the methodology, ablation studies,
+interpolation and extrapolation results, and limitations.
+
+- [Presentation PDF](takehome.pdf)
+
+## Results at a glance
+
+**10,000 in-domain points (7,000 train / 1,000 validation / 2,000 test), seed 42,
+one noise-free periodic target.** Near and far bands contain 2,000 evaluation
+points each. Checkpoints are selected using validation MSE; test and extrapolation
+scores are reporting only. Scores use the current disjoint test grid.
+
+| Model                             | Interpolation RMSE |     Near RMSE |      Far RMSE |
+| --------------------------------- | -----------------: | ------------: | ------------: |
+| Selected Tanh MLP, LR 0.0001      |            0.03640 |       1.60579 |       1.94616 |
+| Tuned raw-input Snake MLP         |           0.005507 |       0.12203 |       0.38740 |
+| **Fourier: spectral + Adam, K=8** |      **1.55×10⁻⁶** | **3.37×10⁻⁶** | **1.22×10⁻⁵** |
+
+Tanh and Snake use separately tuned recipes, so this is not an activation-only
+comparison. Fourier was the most accurate of these evaluated models on this
+benchmark. A full local reproduction verified 33 saved runs through checkpoint
+reloads, exported predictions, and recomputed metrics; outputs are generated
+locally and are not included in a fresh clone.
+
+With **1,000 in-domain points (700 / 100 / 200)**, spectral + Adam K=8 also won
+on validation RMSE among the seven tested configurations, with interpolation /
+near / far RMSE of **3.16×10⁻⁶ / 7.02×10⁻⁶ / 2.84×10⁻⁵**. That check retained
+the existing recipes and epoch limits; it did not retune the models or match
+optimizer-update counts across sample budgets. Both results concern one seed
+and one target, rather than general extrapolation guarantees.
+
 ## Setup
 
 Use Python 3.11 and run commands from the repository root. Create an isolated
@@ -43,7 +76,9 @@ configs/
     ├── snake/        # controlled Tanh versus Snake comparison
     └── fourier/      # initialization, capacity, random-start tuning, multiple seeds
 scripts/              # experiment/study runners and distance evaluation
-tests/               # automated tests
+docs/                 # folder structure and Python API sources (Sphinx)
+notebooks/            # end-to-end Fourier walkthrough
+tests/                # automated tests
 ```
 
 YAML includes resolve relative to the including file. Files merge in listed
@@ -68,13 +103,13 @@ f(x) = sin(x) + 0.55 cos(2x) + 0.35 sin(3x + 0.4)
        + 0.20 cos(5x - 0.7) + 0.12 sin(7x) + 0.08 cos(11x + 0.2)
 ```
 
-| Split | Inputs | Samples |
-|---|---|---:|
-| Training | [−10π, 10π], including boundaries | 7,000 |
-| Validation | Interior of the same interval | 1,000 |
-| Held-out interpolation test | Interior of the same interval | 2,000 |
-| Near extrapolation | (10π, 20π] | 2,000 |
-| Far extrapolation | (50π, 60π] | 2,000 |
+| Split                       | Inputs                            | Samples |
+| --------------------------- | --------------------------------- | ------: |
+| Training                    | [−10π, 10π], including boundaries |   7,000 |
+| Validation                  | Interior of the same interval     |   1,000 |
+| Held-out interpolation test | Interior of the same interval     |   2,000 |
+| Near extrapolation          | (10π, 20π]                        |   2,000 |
+| Far extrapolation           | (50π, 60π]                        |   2,000 |
 
 All grids are deterministic. Validation and test use different interior cell
 offsets, adjusted when necessary to remain disjoint after float32 conversion
@@ -106,11 +141,11 @@ uv run python -m scripts.run_experiments --config configs/experiments/snake_rich
 uv run python -m scripts.run_experiments --config configs/experiments/fourier_rich_periodic.yaml
 ```
 
-| Recipe | Model / preprocessing | Adam LR | Batch | Maximum epochs | Patience |
-|---|---|---:|---:|---:|---:|
-| Reference MLP | Tanh [64, 256, 128], standardized x | 0.001 | 64 | 20,000 | 150 |
-| Tuned Snake | [64, 256, 128], raw x | 0.001 | 128 | 8,000 | 1,500 |
-| Fourier | K=8, spectral initialization, raw x | 0.001 | 64 | 30,000 | 3,000 |
+| Recipe        | Model / preprocessing               | Adam LR | Batch | Maximum epochs | Patience |
+| ------------- | ----------------------------------- | ------: | ----: | -------------: | -------: |
+| Reference MLP | Tanh [64, 256, 128], standardized x |   0.001 |    64 |         20,000 |      150 |
+| Tuned Snake   | [64, 256, 128], raw x               |   0.001 |   128 |          8,000 |    1,500 |
+| Fourier       | K=8, spectral initialization, raw x |   0.001 |    64 |         30,000 |    3,000 |
 
 The selected Tanh model in the presentation is the **learning-rate 0.0001
 ablation**, rather than the standalone reference recipe. Snake learns one
@@ -153,6 +188,11 @@ uv run python -m scripts.run_ablation \
 uv run python -m scripts.run_ablation \
   --study configs/ablations/fourier/initialization_and_capacity.yaml \
   --output-dir outputs/ablations/fourier/initialization_and_capacity
+
+# Repeat the five Fourier variants with 1,000 in-domain points
+uv run python -m scripts.run_ablation \
+  --study configs/ablations/fourier/initialization_and_capacity_1000.yaml \
+  --output-dir outputs/ablations/fourier/initialization_and_capacity_1000
 
 # Seven exploratory random-start variants, capped at 1,500 epochs
 uv run python -m scripts.run_ablation \
@@ -257,47 +297,64 @@ no model is trained or reselected. Outputs include per-band `metrics.csv`,
 centres; the last band (990π, 1000π] is plotted at 995π. The saved training mean
 from the first run supplies the per-band baseline when available.
 
-## Verified results and interpretation
+## Interpretation and limitations
 
-A full reproduction on the local CPU environment verified 33 saved runs,
-including checkpoint reloads, exported predictions, and recomputed metrics.
-The following seed-42 scores use the current disjoint test grid:
+Spectral + Adam with K=8 achieved the lowest validation RMSE among the tested
+Fourier configurations. K=4 had higher approximation error, while K=16 provided
+no improvement and had worse far extrapolation.
 
-| Selected model | Interpolation RMSE | Near RMSE | Far RMSE |
-|---|---:|---:|---:|
-| Tanh MLP, LR 0.0001 | 0.03640 | 1.60579 | 1.94616 |
-| Tuned raw-input Snake MLP | 0.005507 | 0.12203 | 0.38740 |
-| Fourier, spectral + Adam, K=8 | 1.55×10⁻⁶ | 3.37×10⁻⁶ | 1.22×10⁻⁵ |
+The tuned Snake comparison changes preprocessing and training settings as well
+as activation. Use the controlled activation study to assess the activation
+change alone.
 
-These are recorded results, not numerical guarantees across hardware, library
-versions, or thread settings. The tuned Snake also changes scaling, learning
-rate, batch size, and patience; its advantage is not an activation-only result.
-Use the controlled activation study for that comparison.
-
-Fourier K=8 was selected by validation RMSE. K=4 left a larger approximation
-error; K=16 did not improve the measured fit and had worse far extrapolation.
-Small interior errors do not establish reliable extrapolation: frequency
-mismatch accumulates phase error with distance, and float32 evaluation also
-contributes at large inputs. These findings concern one noise-free, stationary
-periodic target; they do not establish performance on noisy or non-periodic data.
-
-Historical test scores can differ slightly because an older grid contained one
-training/test coordinate collision after float32 conversion. The current grid
-removes it. Use the saved prediction export to inspect historical samples;
-do not mix old-grid metrics with newly generated evaluations.
+Results concern one noise-free periodic target. Extrapolation error increases
+with distance, and performance on noisy or non-periodic functions remains
+untested. Exact scores may vary across environments.
 
 ## Tests and checks
 
 ```bash
+# Run tests quietly using Matplotlib's non-interactive backend (no plot windows)
 MPLBACKEND=Agg uv run python -m pytest -q
+
+# Check application code, scripts, and tests for lint errors
 uv run ruff check function_approximation scripts tests
 ```
 
-The latest full preflight passed **320 tests across 21 test files**. Coverage
+The latest full preflight passed **321 tests across 21 test files**. Coverage
 includes disjoint data grids, train-only preprocessing, config validation,
 model construction, initialization, training safety, checkpoint restoration,
 inference without target calls, metrics, visualization, study runners, and
-MLflow artifact logging. The count describes that verification snapshot.
+MLflow artifact logging. The latest full run passed without warnings, with
+SQLAlchemy deprecations treated as errors. The count describes that verification
+snapshot.
+
+## Optional: build the documentation
+
+The Sphinx documentation contains the **folder structure and Python API**.
+API pages are generated from the implementation's docstrings. Documentation
+sources live in `docs/`; generated HTML under `docs/_build/` is ignored by Git.
+
+Install the optional documentation dependencies and build from the repository root:
+
+```bash
+# Install the locked project dependencies, including documentation tools
+uv sync --locked --inexact --group docs
+
+# Build HTML documentation; report all warnings and fail if any occur
+uv run --group docs sphinx-build -W --keep-going \
+  -b html docs docs/_build/html
+```
+
+Open `docs/_build/html/index.html` in your browser. On macOS:
+
+```bash
+open docs/_build/html/index.html
+```
+
+Rebuild after changing Python docstrings or documentation sources. The build
+treats warnings as errors. Documentation dependencies are optional for training
+and inference; generated HTML does not need to be committed.
 
 ## Optional MLflow tracking
 
