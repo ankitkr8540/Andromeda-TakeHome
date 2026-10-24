@@ -1,0 +1,44 @@
+# Same Fourier study with 1,000 in-domain observations (700/100/200).
+model_type: fourier
+seed: 42
+max_epochs: 30000
+reference: spectral_adam_k8
+targets:
+- rich_periodic
+model:
+  num_frequencies: 8
+variants:
+  random_adam_k8:
+    training:
+      fourier_initialization: random
+      fourier_fit: adam
+    data:
+      sample_size: 1000
+  spectral_only_k8:
+    training:
+      fourier_initialization: spectral
+      fourier_fit: spectral_only
+    data:
+      sample_size: 1000
+  spectral_adam_k8:
+    training:
+      fourier_initialization: spectral
+      fourier_fit: adam
+    data:
+      sample_size: 1000
+  spectral_adam_k4:
+    model:
+      num_frequencies: 4
+    training:
+      fourier_initialization: spectral
+      fourier_fit: adam
+    data:
+      sample_size: 1000
+  spectral_adam_k16:
+    model:
+      num_frequencies: 16
+    training:
+      fourier_initialization: spectral
+      fourier_fit: adam
+    data:
+      sample_size: 1000
