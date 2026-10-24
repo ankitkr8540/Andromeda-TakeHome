@@ -148,7 +148,6 @@ configs/
     └── fourier/      # initialization, capacity, random-start tuning, multiple seeds
 scripts/              # experiment/study runners and distance evaluation
 docs/                 # folder structure and Python API sources (Sphinx)
-notebooks/            # end-to-end Fourier walkthrough
 tests/                # automated tests
 ```
 
@@ -157,7 +156,7 @@ order, followed by local overrides. Mappings merge recursively; lists replace.
 Relative `experiment.output_dir` paths are anchored to the repository root,
 which is detected from the runner's location, rather than your username or
 current working directory. The supplied configs need no path edits after cloning.
-Generated study and notebook configs also use repository-relative output paths
+Generated study configs also use repository-relative output paths
 for destinations inside the project. Explicit absolute destinations outside the
 project remain supported.
 
@@ -192,18 +191,6 @@ MSE with Adam; checkpoint selection and early stopping use validation MSE.
 `min_delta` is in **MSE units**. Test and extrapolation labels are used only for
 evaluation. Metrics include MSE, RMSE, MAE, and R² in original target units,
 plus a baseline that predicts the training-label mean.
-
-## End-to-end notebook
-
-Open [`notebooks/fourier_end_to_end.ipynb`](notebooks/fourier_end_to_end.ipynb)
-and select the repository's `.venv/bin/python` kernel on macOS/Linux or
-`.venv/Scripts/python.exe` on Windows. Run cells in order to
-generate 1,000 in-domain samples, inspect spectral initialization, train with
-Adam, view metrics/plots, and reload the saved checkpoint for inference.
-Change `SAMPLE_SIZE` in the notebook to use another budget. Each execution saves
-a fresh run under `outputs/notebooks/fourier/`; it does not overwrite the study
-results. A notebook interface and `ipykernel` are optional environment tools,
-not runtime requirements of the training package.
 
 ## Train the selected models
 
