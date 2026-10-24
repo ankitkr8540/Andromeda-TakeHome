@@ -698,6 +698,9 @@ def plot_error_vs_distance(
     coordinate: str = "input",
     title: str = "Error versus distance",
     save_path: str | Path | None = None,
+    *,
+    series_styles: dict[str, tuple[str, str]] | None = None,
+    baseline_variant: str | None = None,
 ) -> Figure:
     """Plot precomputed band RMSE against input position or extrapolation distance.
 
@@ -712,7 +715,11 @@ def plot_error_vs_distance(
             the caller; displayed as a dotted training-mean baseline.
         coordinate: ``input`` for band centres measured from the origin, or
             ``boundary`` for distances from the upper training boundary.
-        title: Figure heading, preserved verbatim.
+        title: Figure heading, preserved verbatim; empty string omits it.
+        series_styles: Optional variant-to-(color, linestyle) overrides, so styles
+            remain consistent when the caller changes the order of model runs.
+        baseline_variant: Optional per-band baseline series, drawn dotted and
+            annotated directly instead of occupying a legend entry.
         save_path: Optional PNG, SVG, or other Matplotlib-supported destination.
             Missing parent directories are created.
 
@@ -767,26 +774,40 @@ def plot_error_vs_distance(
     ):
         raise ValueError("baseline_rmse must be positive and finite.")
 
-    fig, ax = plt.subplots(figsize=(11, 5.5), layout="constrained")
-    colors = (GROUND_TRUTH, BURGUNDY, PREDICTION)
-    line_styles = (":", "-", "--", "-.")
-    for index, (variant, points) in enumerate(series.items()):
+    if baseline_variant is not None and baseline_variant not in series:
+        raise ValueError("baseline_variant must name a supplied series.")
+    if baseline_variant is not None and baseline_rmse is not None:
+        raise ValueError("Supply either a per-band baseline or a constant baseline.")
+
+    fig, ax = plt.subplots(figsize=(11, 5.8), layout="constrained")
+    defaults = (
+        (GROUND_TRUTH, "-"),
+        ("#BD3156", "-"),
+        (PREDICTION, "--"),
+        (BURGUNDY, "-"),
+    )
+    model_index = 0
+    baseline_points = None
+    for variant, points in series.items():
         values = np.asarray(sorted(points))
+        if variant == baseline_variant:
+            baseline_points = values
+            continue
+        color, linestyle = (series_styles or {}).get(
+            variant, defaults[model_index % len(defaults)]
+        )
+        model_index += 1
         ax.plot(
             values[:, 0],
             values[:, 1],
-            color=colors[index % len(colors)],
-            linestyle=line_styles[index % len(line_styles)],
+            color=color,
+            linestyle=linestyle,
             linewidth=2,
             label=(labels or {}).get(variant, variant),
         )
     if baseline_rmse is not None:
         ax.axhline(
-            baseline_rmse,
-            color=INK,
-            linestyle=":",
-            linewidth=1.5,
-            label=f"Training-mean baseline ({format_rmse(baseline_rmse)})",
+            baseline_rmse, color=INK, linestyle=":", linewidth=1.5, label="_nolegend_"
         )
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -799,15 +820,52 @@ def plot_error_vs_distance(
         FuncFormatter(lambda value, _: pi_label(value * np.pi))
     )
     ax.xaxis.set_minor_formatter(NullFormatter())
-    description = (
-        "Input x · band centre"
-        if coordinate == "input"
-        else "Distance from training boundary · band centre"
+    if baseline_points is not None:
+        # Preserve measured band errors; extend only the endpoint values to the
+        # plot edges so the reference spans the same visible range as the axes.
+        ax.plot(
+            np.r_[lower, baseline_points[:, 0], ax.get_xlim()[1]],
+            np.r_[baseline_points[0, 1], baseline_points[:, 1], baseline_points[-1, 1]],
+            color=INK,
+            linestyle=":",
+            linewidth=1.5,
+            label="_nolegend_",
+        )
+    reference = (
+        baseline_rmse
+        if baseline_rmse is not None
+        else (baseline_points[0, 1] if baseline_points is not None else None)
     )
-    ax.set_xlabel(f"{description} (log scale)")
-    ax.set_ylabel("Band RMSE (log scale)")
+    if reference is not None:
+        ax.text(
+            lower * 1.1,
+            reference * 0.82,
+            f"predict-the-mean ({reference:.2f})",
+            va="top",
+            fontsize=11,
+        )
+    errors = [error for points in series.values() for _, error in points]
+    if reference is not None:
+        errors.append(reference)
+    ax.set_ylim(min(1e-7, min(errors) * 0.5), max(20, max(errors) * 1.3))
+    ax.yaxis.set_major_locator(LogLocator(base=10, numticks=12))
+    if coordinate == "input":
+        widths = [
+            float(row["x_max"]) - float(row["x_min"])
+            for row in rows
+            if "x_min" in row and "x_max" in row
+        ]
+        if widths and np.allclose(widths, widths[0]):
+            band = pi_label(widths[0])
+            description = f"Distance from origin (centre of each {band} band)"
+        else:
+            description = "Distance from origin (band centre)"
+    else:
+        description = "Distance from training boundary (band centre)"
+    ax.set_xlabel(description)
+    ax.set_ylabel("RMSE per band (log)")
     ax.set_title(title, loc="left")
-    ax.legend(frameon=False, fontsize=10)
+    ax.legend(loc="lower right", ncol=2, frameon=False, fontsize=10)
     style_figure(fig)
     _save_figure(fig, save_path)
     return fig

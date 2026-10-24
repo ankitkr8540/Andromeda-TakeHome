@@ -9,7 +9,7 @@ Terminal usage::
 
     python -m function_approximation.inference --run-dir outputs/<run> --x -10 0 100
 
-The run directory must contain best_model.pt and its matching preprocessor.joblib.
+Grouped runs keep best_model.pt and preprocessor.joblib under model/. Legacy flat runs also work.
 """
 
 import argparse
@@ -94,8 +94,8 @@ def load_predictor(run_dir: str | Path, device: str = "cpu") -> Predictor:
     """Reconstruct a fitted predictor from trusted experiment artifacts.
 
     Args:
-        run_dir: Directory containing ``best_model.pt`` and
-            ``preprocessor.joblib`` from the same experiment run.
+        run_dir: Run directory containing ``model/best_model.pt`` and
+            ``model/preprocessor.joblib``; legacy flat runs also work.
         device: PyTorch device on which to load and evaluate the model.
 
     Returns:
@@ -111,16 +111,20 @@ def load_predictor(run_dir: str | Path, device: str = "cpu") -> Predictor:
         only load artifacts from trusted sources. Other deserialization errors
         propagate from PyTorch/joblib."""
     run_dir = Path(run_dir)
-    for name in ("best_model.pt", "preprocessor.joblib"):
-        if not (run_dir / name).is_file():
+    checkpoint_path = run_dir / "model" / "best_model.pt"
+    if not checkpoint_path.is_file():
+        checkpoint_path = run_dir / "best_model.pt"
+    preprocessor_path = run_dir / "model" / "preprocessor.joblib"
+    if not preprocessor_path.is_file():
+        preprocessor_path = run_dir / "preprocessor.joblib"
+    for path in (checkpoint_path, preprocessor_path):
+        if not path.is_file():
             raise FileNotFoundError(
-                f"Missing inference artifact: {run_dir / name}. "
-                "Choose the output run directory containing best_model.pt "
-                "and preprocessor.joblib."
+                f"Missing inference artifact: {path}. "
+                "Choose the run root containing model/best_model.pt and "
+                "model/preprocessor.joblib (or their legacy flat equivalents)."
             )
-    checkpoint = torch.load(
-        run_dir / "best_model.pt", map_location=device, weights_only=True
-    )
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     if not isinstance(checkpoint, dict) or not all(
         isinstance(checkpoint.get(key), dict)
         for key in ("model_config", "model_state_dict")
@@ -134,7 +138,7 @@ def load_predictor(run_dir: str | Path, device: str = "cpu") -> Predictor:
     model.load_state_dict(checkpoint["model_state_dict"])
     if any(not torch.isfinite(parameter).all() for parameter in model.parameters()):
         raise ValueError("Checkpoint contains nonfinite model parameters.")
-    preprocessor = joblib.load(run_dir / "preprocessor.joblib")
+    preprocessor = joblib.load(preprocessor_path)
     if not isinstance(preprocessor, DataPreprocessor) or not preprocessor.is_fitted:
         raise ValueError("Expected a saved, fitted DataPreprocessor.")
     return Predictor(model, preprocessor)
@@ -149,7 +153,7 @@ def main() -> None:
         "--run-dir",
         required=True,
         type=Path,
-        help="Output run directory containing best_model.pt and preprocessor.joblib.",
+        help="Output run root containing model/ artifacts; legacy flat runs also work.",
     )
     parser.add_argument(
         "--x",

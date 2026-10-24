@@ -27,7 +27,7 @@ def log_output_artifacts(output_dir: str | Path, tracking_config: dict) -> None:
 
     Logging switches control checkpoints, preprocessing, and PNG/SVG/PDF figures.
     Other files, including resolved config and metrics, are always uploaded.
-    Local files are retained regardless of upload settings; subfolders are skipped.
+    Local files are retained; artifact subfolders are preserved in MLflow.
     """
     switches = {
         ".pt": "log_model",
@@ -36,10 +36,12 @@ def log_output_artifacts(output_dir: str | Path, tracking_config: dict) -> None:
         ".svg": "log_figures",
         ".pdf": "log_figures",
     }
-    for path in sorted(Path(output_dir).iterdir()):
+    root = Path(output_dir)
+    for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         switch = switches.get(path.suffix.lower())
         if switch and not tracking_config.get(switch, True):
             continue
-        mlflow.log_artifact(str(path), artifact_path="experiment_outputs")
+        destination = Path("experiment_outputs") / path.relative_to(root).parent
+        mlflow.log_artifact(str(path), artifact_path=destination.as_posix())
