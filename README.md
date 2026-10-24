@@ -15,6 +15,10 @@ Run these commands in a terminal. You need Git and
 dependencies; you do not need to install Python separately. The project pins
 Python 3.11 in `.python-version` and runs on CPU by default.
 
+On Windows, use **PowerShell**. Unless a block is labeled for a specific OS,
+the commands work in macOS/Linux terminals and Windows PowerShell. Paths with
+forward slashes also work on Windows. All commands run from the repository root.
+
 ### 1. Install uv (once per laptop)
 
 If `uv --version` already works, skip this step. On macOS or Linux:
@@ -23,13 +27,19 @@ If `uv --version` already works, skip this step. On macOS or Linux:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+On Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
 Restart your terminal after installation, then check:
 
 ```bash
 uv --version
 ```
 
-For Windows and other installation options, see the
+For other installation options, see the
 [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ### 2. Clone the repository and install dependencies
@@ -51,12 +61,20 @@ Run all commands from the repository root.
 
 ### 3. Check the installation
 
+macOS/Linux:
+
 ```bash
 MPLBACKEND=Agg uv run python -m pytest -q
 ```
 
-This runs the test suite without opening plot windows. In Windows PowerShell,
-set `$env:MPLBACKEND = "Agg"` first, then run `uv run python -m pytest -q`.
+Windows PowerShell:
+
+```powershell
+$env:MPLBACKEND = "Agg"
+uv run python -m pytest -q
+```
+
+This runs the test suite without opening plot windows.
 
 ### 4. Train your first model
 
@@ -178,7 +196,8 @@ plus a baseline that predicts the training-label mean.
 ## End-to-end notebook
 
 Open [`notebooks/fourier_end_to_end.ipynb`](notebooks/fourier_end_to_end.ipynb)
-and select the repository's `.venv/bin/python` kernel. Run cells in order to
+and select the repository's `.venv/bin/python` kernel on macOS/Linux or
+`.venv/Scripts/python.exe` on Windows. Run cells in order to
 generate 1,000 in-domain samples, inspect spectral initialization, train with
 Adam, view metrics/plots, and reload the saved checkpoint for inference.
 Change `SAMPLE_SIZE` in the notebook to use another budget. Each execution saves
@@ -272,8 +291,24 @@ Replace `RUN_DIR` below with the printed timestamped run directory:
 
 ```bash
 uv run python -m json.tool RUN_DIR/metrics/metrics.json
-# macOS; on other systems, use your image viewer
-open RUN_DIR/plots/extrapolation.png
+```
+
+Open the plot on macOS:
+
+```bash
+open "RUN_DIR/plots/extrapolation.png"
+```
+
+Windows PowerShell:
+
+```powershell
+Start-Process "RUN_DIR/plots/extrapolation.png"
+```
+
+On Linux:
+
+```bash
+xdg-open "RUN_DIR/plots/extrapolation.png"
 ```
 
 Study roots contain `configs/`, `results/`, `logs/`, and `runs/`, plus
@@ -290,19 +325,13 @@ training. Each model can have a different timestamp.
 
 ```bash
 # Selected Tanh MLP
-uv run python -m function_approximation.inference \
-  --run-dir outputs/best/mlp/rich_periodic/RUN_TIMESTAMP \
-  --x -3.14 0 100
+uv run python -m function_approximation.inference --run-dir outputs/best/mlp/rich_periodic/RUN_TIMESTAMP --x -3.14 0 100
 
 # Selected Snake MLP
-uv run python -m function_approximation.inference \
-  --run-dir outputs/best/snake/rich_periodic/RUN_TIMESTAMP \
-  --x -3.14 0 100
+uv run python -m function_approximation.inference --run-dir outputs/best/snake/rich_periodic/RUN_TIMESTAMP --x -3.14 0 100
 
 # Selected Fourier model
-uv run python -m function_approximation.inference \
-  --run-dir outputs/best/fourier/rich_periodic/RUN_TIMESTAMP \
-  --x -3.14 0 100
+uv run python -m function_approximation.inference --run-dir outputs/best/fourier/rich_periodic/RUN_TIMESTAMP --x -3.14 0 100
 ```
 
 Replace the numbers after `--x` with your input values. These commands perform
@@ -375,12 +404,23 @@ untested. Exact scores may vary across environments.
 
 ## Tests and checks
 
-```bash
-# Run tests quietly using Matplotlib's non-interactive backend (no plot windows)
-MPLBACKEND=Agg uv run python -m pytest -q
+macOS/Linux:
 
-# Check application code, scripts, and tests for lint errors
-uv run ruff check function_approximation scripts tests
+```bash
+MPLBACKEND=Agg uv run python -m pytest -q
+```
+
+Windows PowerShell:
+
+```powershell
+$env:MPLBACKEND = "Agg"
+uv run python -m pytest -q
+```
+
+Check application code, scripts, the UI, and tests for lint errors (all platforms):
+
+```bash
+uv run ruff check function_approximation scripts tests streamlit_app.py
 ```
 
 The latest full preflight passed **321 tests across 21 test files**. Coverage
@@ -405,14 +445,25 @@ Install the optional documentation dependencies and build from the repository ro
 uv sync --locked --inexact --group docs
 
 # Build HTML documentation; report all warnings and fail if any occur
-uv run --group docs sphinx-build -W --keep-going \
-  -b html docs docs/_build/html
+uv run --group docs sphinx-build -W --keep-going -b html docs docs/_build/html
 ```
 
 Open `docs/_build/html/index.html` in your browser. On macOS:
 
 ```bash
 open docs/_build/html/index.html
+```
+
+Windows PowerShell:
+
+```powershell
+Start-Process "docs/_build/html/index.html"
+```
+
+On Linux:
+
+```bash
+xdg-open docs/_build/html/index.html
 ```
 
 Rebuild after changing Python docstrings or documentation sources. The build
@@ -424,10 +475,7 @@ and inference; generated HTML does not need to be committed.
 Set `tracking.enabled: true` in YAML and start a local server separately:
 
 ```bash
-uv run mlflow server \
-  --backend-store-uri sqlite:///mlflow.db \
-  --artifacts-destination ./mlartifacts \
-  --host 127.0.0.1 --port 5001
+uv run mlflow server --backend-store-uri sqlite:///mlflow.db --artifacts-destination ./mlartifacts --host 127.0.0.1 --port 5001
 ```
 
 The default tracking URI is `http://127.0.0.1:5001`. Runs log parameters,
