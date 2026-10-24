@@ -21,7 +21,7 @@ Andromeda-TakeHome/
 │       ├── snake/              # Controlled Tanh versus Snake comparison
 │       └── fourier/            # Initialization, capacity, and optimization studies
 ├── scripts/                     # Experiment, study, evaluation, and plot commands
-├── notebooks/                   # End-to-end Fourier walkthrough
+├── notebooks/                   # Interactive model walkthrough
 ├── tests/                       # Unit and integration tests
 ├── outputs/                     # Generated run artifacts and study summaries
 ├── docs/                        # Sphinx sources and generated HTML
