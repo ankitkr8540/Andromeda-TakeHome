@@ -11,7 +11,7 @@ evaluation:
   generate_plots: true
   save_predictions: true
 tracking:
-  enabled: true
+  enabled: false
   tracking_uri: http://127.0.0.1:5001
   log_model: true
   log_preprocessor: true
